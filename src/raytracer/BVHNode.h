@@ -7,7 +7,6 @@
 #include "device_launch_parameters.h"
 
 #include <thrust/sort.h>
-#include "World.h"
 
 struct BoxCmp {
     __device__ BoxCmp(int axis) : axis(axis) {}
@@ -114,6 +113,8 @@ public:
 
     __device__ ~BVHNode() {
         delete left;
-        delete right;
+        if (right != left) {
+            delete right;
+        }
     }
 };

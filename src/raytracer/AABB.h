@@ -26,8 +26,9 @@ public:
 			auto invD = 1.0f / r.direction[a];
 			auto t0 = (_min[a] - r.origin[a]) * invD;
 			auto t1 = (_max[a] - r.origin[a]) * invD;
-			if (invD < 0.0f)
-				std::swap(t0, t1);
+			if (invD < 0.0f) {
+				float tmp = t0; t0 = t1; t1 = tmp;
+			}
 			t_min = t0 > t_min ? t0 : t_min;
 			t_max = t1 < t_max ? t1 : t_max;
 			if (t_max <= t_min)

@@ -67,14 +67,18 @@ __global__ void create_world(thrust::device_ptr<World*> d_world, thrust::device_
 		device_world->add(new Sphere(glm::vec3(-1, 10, -1), 0.5f, new Dielectric(1.5f)));
 		device_world->add(new Sphere(glm::vec3(1, 0, -1), 0.5f, new Metal(glm::vec3(0.8f, 0.8f, 0.8f), 0.3f)));
 
-		device_world->add(new Sphere(glm::vec3(0, -1000.5, 0), 1000.0f, 
+		device_world->add(new Sphere(glm::vec3(0, -1000.5, 0), 1000.0f,
 			new Lambertian(
 				new CheckerTexture(
-					glm::vec3(0.2f, 0.3f, 0.1f), 
+					glm::vec3(0.2f, 0.3f, 0.1f),
 					glm::vec3(0.9f)
 				)
 			)
 		));
+
+		curandState rand_state;
+		curand_init(1984, 0, 0, &rand_state);
+		device_world->build_bvh(&rand_state);
 
 		*d_camera = camera_info.construct_camera();
 	}

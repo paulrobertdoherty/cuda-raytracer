@@ -29,7 +29,12 @@ file(GLOB_RECURSE HEADER_FILES
 add_executable(${PROJECT_NAME} ${HEADER_FILES} ${SOURCE_FILES})
 
 # Set CUDA architecture to the host's GPU architecture
-set_target_properties(${PROJECT_NAME} PROPERTIES CUDA_ARCHITECTURES 70)
+set_target_properties(${PROJECT_NAME} PROPERTIES CUDA_ARCHITECTURES 86)
+
+# CUDA 13+ CCCL requires C++17
+set_target_properties(${PROJECT_NAME} PROPERTIES
+	CXX_STANDARD 17
+	CUDA_STANDARD 17)
 
 # Add .lib files
 link_directories(${CMAKE_SOURCE_DIR}/lib)
@@ -59,6 +64,10 @@ add_library(GLAD "thirdparty/glad.c")
 # CUDA
 find_package(CUDA REQUIRED)
 include_directories("${CUDA_INCLUDE_DIRS}")
+# CUDA 12+ moved Thrust/CUB/libcudacxx into a CCCL subdirectory
+if(EXISTS "${CUDA_TOOLKIT_ROOT_DIR}/include/cccl")
+	include_directories("${CUDA_TOOLKIT_ROOT_DIR}/include/cccl")
+endif()
 
 # Put all libraries into a variable
 set(LIBS ${GLFW3_LIBRARY} ${OPENGL_LIBRARY} GLAD ${CMAKE_DL_LIBS} ${CUDA_LIBRARIES})
@@ -70,6 +79,9 @@ include_directories(
 	"${CMAKE_SOURCE_DIR}/include/glad"
 	"${CMAKE_SOURCE_DIR}/include/glm"
 )
+
+# Prevent Windows min/max/small macros from conflicting with C++ standard library
+target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 
 # Define the link libraries
 target_link_libraries(${PROJECT_NAME} ${LIBS})
@@ -107,6 +119,14 @@ function(CUDA_CONVERT_FLAGS EXISTING_TARGET)
 endfunction()
 
 CUDA_CONVERT_FLAGS(${PROJECT_NAME})
+
+# CUDA 13+ CCCL requires the standard conforming preprocessor
+if(MSVC)
+	target_compile_options(${PROJECT_NAME} PRIVATE
+		"$<$<COMPILE_LANGUAGE:CXX>:/Zc:preprocessor>"
+		"$<$<COMPILE_LANGUAGE:C>:/Zc:preprocessor>"
+		"$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>")
+endif()
 
 # check for cache variable set in cmakepresets called IS_CUDA_DEBUG
 if(IS_CUDA_DEBUG) 

@@ -7,6 +7,8 @@
 #include "thrust/device_malloc.h"
 #include "thrust/device_free.h"
 
+#include <curand_kernel.h>
+
 
 
 class World : public Hittable {
@@ -14,22 +16,28 @@ public:
     int number_of_objects;
     int capacity;
     Hittable** objects;
-    
+    Hittable* bvh_root;
+
     __device__ World() {
         objects = new Hittable*[20];
         number_of_objects = 0;
         capacity = 20;
+        bvh_root = nullptr;
     }
 
     __device__ World(int capacity) {
         objects = new Hittable*[capacity];
         number_of_objects = 0;
         capacity = capacity;
+        bvh_root = nullptr;
     }
 
     __device__ ~World();
 
     __device__ virtual bool hit(const Ray& r, float t_min, float t_max, HitRecord& rec) const {
+        if (bvh_root) {
+            return bvh_root->hit(r, t_min, t_max, rec);
+        }
         HitRecord temp_rec;
         bool hit_anything = false;
         float closest_so_far = t_max;
@@ -44,6 +52,8 @@ public:
     }
 
     __device__ virtual bool bounding_box(float time0, float time1, AABB& output_box) const;
+
+    __device__ void build_bvh(curandState* rand_state);
 
     __device__ bool add(Hittable* object) {
         if (number_of_objects >= capacity) {
@@ -66,25 +76,35 @@ public:
 
 #ifdef __CUDACC__
 
-#include "Sphere.h"
+#include "BVHNode.h"
+
+__device__ void World::build_bvh(curandState* rand_state) {
+    if (number_of_objects > 0) {
+        bvh_root = new BVHNode(objects, number_of_objects, 0.0f, 0.0f, rand_state);
+    }
+}
 
 __device__ World::~World() {
-    for (int i = 0; i < number_of_objects; i++) {
-        delete (Sphere*) objects[i];
+    if (bvh_root) {
+        delete bvh_root;
+    } else {
+        for (int i = 0; i < number_of_objects; i++) {
+            delete objects[i];
+        }
     }
     delete[] objects;
 }
 
 __device__ AABB surrounding_box(AABB box0, AABB box1) {
-    glm::vec3 small(fmin(box0.min().x, box1.min().x),
+    glm::vec3 lo(fmin(box0.min().x, box1.min().x),
         fmin(box0.min().y, box1.min().y),
         fmin(box0.min().z, box1.min().z));
 
-    glm::vec3 big(fmax(box0.max().x, box1.max().x),
+    glm::vec3 hi(fmax(box0.max().x, box1.max().x),
         fmax(box0.max().y, box1.max().y),
         fmax(box0.max().z, box1.max().z));
 
-    return AABB(small, big);
+    return AABB(lo, hi);
 }
 
 __device__ bool World::bounding_box(float time0, float time1, AABB& output_box) const {
