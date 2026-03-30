@@ -20,10 +20,12 @@ struct KernelInfo {
     FrameBuffer* frame_buffer;
 
     int nx, ny;
+    int samples;
+    int max_depth;
 
     KernelInfo() {}
     ~KernelInfo();
-    KernelInfo(cudaGraphicsResource_t resources, int nx, int ny);
+    KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int samples, int max_depth, float fov);
     void set_camera(glm::vec3 position, glm::vec3 forward, glm::vec3 up);
     void render();
     void resize(int nx, int ny);

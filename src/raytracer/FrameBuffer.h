@@ -17,9 +17,10 @@ public:
 	size_t buffer_size;
 	unsigned int width;
 	unsigned int height;
+	int max_depth;
 
 
-	__host__ FrameBuffer(unsigned int width, unsigned int height);
+	__host__ FrameBuffer(unsigned int width, unsigned int height, int max_depth);
 
 	__device__ void writePixel(int x, int y, glm::vec4 pixel);
 
@@ -29,7 +30,7 @@ public:
 #ifdef __CUDACC__
 #include "Material.h"
 
-__host__ FrameBuffer::FrameBuffer(unsigned int width, unsigned int height) : width{ width }, height{ height } {}
+__host__ FrameBuffer::FrameBuffer(unsigned int width, unsigned int height, int max_depth) : width{ width }, height{ height }, max_depth{ max_depth } {}
 
 __device__ void FrameBuffer::writePixel(int x, int y, glm::vec4 pixel) {
 	int idx = y * width + x;
@@ -41,7 +42,7 @@ __device__ glm::vec3 FrameBuffer::color(const Ray& r, Hittable* world, curandSta
 	Ray cur_ray = r;
 	glm::vec3 cur_attenuation = glm::vec3(1.0, 1.0, 1.0);
 	// ray depth
-	for (int i = 0; i < 50; i++) {
+	for (int i = 0; i < max_depth; i++) {
 		HitRecord rec;
 		if (world->hit(cur_ray, 0.001f, FLT_MAX, rec)) {
 			Ray scattered;

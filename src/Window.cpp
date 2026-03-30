@@ -4,9 +4,12 @@
 #include <iomanip>
 #include <memory>
 
-Window::Window(unsigned int width, unsigned int height) {
+Window::Window(unsigned int width, unsigned int height, int samples, int max_depth, float fov) {
 	Window::width = width;
 	Window::height = height;
+	Window::samples = samples;
+	Window::max_depth = max_depth;
+	Window::fov = fov;
 	Window::_frame_count = 0;
 }
 
@@ -81,7 +84,7 @@ int Window::init_quad() {
 
 	_shader = std::make_unique<Shader>("./shaders/rendertype_screen.vert", "./shaders/rendertype_screen.frag");
 	_current_frame = std::make_unique<Quad>(Window::width, Window::height);
-	_current_frame->cuda_init();
+	_current_frame->cuda_init(samples, max_depth, fov);
 	_current_frame->make_FBO();
 
 	_accum_shader = std::make_unique<Shader>("./shaders/rendertype_accumulate.vert", "./shaders/rendertype_accumulate.frag");

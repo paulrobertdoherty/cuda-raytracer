@@ -26,7 +26,7 @@ public:
 	std::vector<float> vertices;
 	Quad(unsigned int width, unsigned int height);
 
-	void cuda_init();
+	void cuda_init(int samples, int max_depth, float fov);
 	void cuda_destroy();
 	void render_kernel();
 	void resize(unsigned int width, unsigned int height);

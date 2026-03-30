@@ -12,8 +12,11 @@ class Window {
 public:
 	unsigned int width;
 	unsigned int height;
+	int samples;
+	int max_depth;
+	float fov;
 
-	Window(unsigned int width, unsigned int height);
+	Window(unsigned int width, unsigned int height, int samples, int max_depth, float fov);
 
 	int init();
 	void destroy();
