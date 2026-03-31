@@ -22,7 +22,7 @@
 
 #include "raytracer/kernel.h"
 
-__global__ void raytrace(FrameBuffer fb, thrust::device_ptr<World*> world, thrust::device_ptr<Camera*> d_camera, thrust::device_ptr<curandState> rand_state) {
+__global__ void raytrace(FrameBuffer fb, thrust::device_ptr<World*> world, thrust::device_ptr<Camera*> d_camera, thrust::device_ptr<curandState> rand_state, int samples) {
 
 	// X AND Y coordinates
 	int i = threadIdx.x + blockIdx.x * blockDim.x;
@@ -37,10 +37,7 @@ __global__ void raytrace(FrameBuffer fb, thrust::device_ptr<World*> world, thrus
 
 	glm::vec3 col = glm::vec3(0.0f, 0.0f, 0.0f);
 
-	// samples
-	const int ns = 3;
-
-	for (int s = 0; s < ns; s++) {
+	for (int s = 0; s < samples; s++) {
 		// normalized screen coordinates
 		float u = float(i + curand_uniform(&local_rand_state)) / float(fb.width);
 		float v = float(j + curand_uniform(&local_rand_state)) / float(fb.height);
@@ -48,7 +45,7 @@ __global__ void raytrace(FrameBuffer fb, thrust::device_ptr<World*> world, thrus
 		col += fb.color(r, *world, &local_rand_state);
 	}
 	rand_state[pixel_idx] = local_rand_state;
-	col /= float(ns);
+	col /= float(samples);
 	col[0] = sqrtf(col[0]);
 	col[1] = sqrtf(col[1]);
 	col[2] = sqrtf(col[2]);
@@ -94,14 +91,16 @@ __global__ void render_init(int width, int height, thrust::device_ptr<curandStat
 }
 
 
-KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny) {
+KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int samples, int max_depth, float fov) {
 	this->resources = resources;
 	this->nx = nx;
 	this->ny = ny;
+	this->samples = samples;
+	this->max_depth = max_depth;
 
-	this->frame_buffer = new FrameBuffer(nx, ny);
+	this->frame_buffer = new FrameBuffer(nx, ny, max_depth);
 
-	camera_info = CameraInfo(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f), 90.0f, (float) nx, (float) ny);
+	camera_info = CameraInfo(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f), fov, (float) nx, (float) ny);
 
 	//checkCudaErrors(cudaMalloc((void**)&d_camera, sizeof(Camera)));
 	d_camera = thrust::device_new<Camera*>();
@@ -129,7 +128,7 @@ void KernelInfo::resize(int nx, int ny) {
 	this->ny = ny;
 
 	delete frame_buffer;
-	this->frame_buffer = new FrameBuffer(nx, ny);
+	this->frame_buffer = new FrameBuffer(nx, ny, max_depth);
 
 	int tx = 8;
 	int ty = 8;
@@ -170,7 +169,7 @@ void KernelInfo::render() {
 	dim3 threads(tx, ty);
 
 	// frame buffer is implicitly copied to the device each frame
-	raytrace<<<blocks, threads>>> (*frame_buffer, d_world, d_camera, d_rand_state);
+	raytrace<<<blocks, threads>>> (*frame_buffer, d_world, d_camera, d_rand_state, samples);
 	check_cuda_errors(cudaGetLastError());
 	// wait for the gpu to finish
 	check_cuda_errors(cudaDeviceSynchronize());

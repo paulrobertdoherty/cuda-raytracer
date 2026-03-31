@@ -70,12 +70,12 @@ Quad::Quad(unsigned int width, unsigned int height) {
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void Quad::cuda_init() {
+void Quad::cuda_init(int samples, int max_depth, float fov) {
     check_cuda_errors(
         cudaGraphicsGLRegisterBuffer(&CGR,
             PBO,
             cudaGraphicsRegisterFlagsNone));
-    _renderer = std::make_unique<KernelInfo>(this->CGR, width, height);
+    _renderer = std::make_unique<KernelInfo>(this->CGR, width, height, samples, max_depth, fov);
 }
 
 void Quad::cuda_destroy() {
