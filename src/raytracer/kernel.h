@@ -11,7 +11,6 @@
 struct KernelInfo {
 
     thrust::device_ptr<Camera*> d_camera;
-    Camera* d_camera_raw;
     thrust::device_ptr<curandState> d_rand_state;
     
     thrust::device_ptr<World*> d_world;

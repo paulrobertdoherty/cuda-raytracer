@@ -6,38 +6,29 @@
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
-#include <thrust/sort.h>
+// Simple device-side sort by bounding box axis (replaces thrust::sort to avoid
+// CCCL device-side dispatch issues)
+__device__ inline float bb_axis_min(Hittable* obj, int axis) {
+    AABB box;
+    obj->bounding_box(0, 0, box);
+    if (axis == 0) return box.min().x;
+    if (axis == 1) return box.min().y;
+    return box.min().z;
+}
 
-struct BoxCmp {
-    __device__ BoxCmp(int axis) : axis(axis) {}
-
-    __device__ bool operator()(Hittable* a, Hittable* b) {
-		AABB box_left, box_right;
-
-        if (!a->bounding_box(0, 0, box_left) || !b->bounding_box(0, 0, box_right)) {
-            printf("No bounding box in bvh_node constructor.\n");
-            return false;
+__device__ inline void sort_hittables(Hittable** objects, int n, int axis) {
+    // Insertion sort — fine for small n
+    for (int i = 1; i < n; i++) {
+        Hittable* key = objects[i];
+        float key_val = bb_axis_min(key, axis);
+        int j = i - 1;
+        while (j >= 0 && bb_axis_min(objects[j], axis) > key_val) {
+            objects[j + 1] = objects[j];
+            j--;
         }
-
-        float left_min, right_min;
-
-        if (axis == 1) {
-            left_min = box_left.min().x;
-            right_min = box_right.min().x;
-        } else if (axis == 2) {
-			left_min = box_left.min().y;
-			right_min = box_right.min().y;
-		} else if (axis == 3) {
-			left_min = box_left.min().z;
-			right_min = box_right.min().z;
-		}
-
-        return left_min < right_min;
-	}
-
-    // Axis: 1 = x, 2 = y, 3 = z
-    int axis;
-};
+        objects[j + 1] = key;
+    }
+}
 
 __device__ AABB surrounding_box(AABB box0, AABB box1);
 
@@ -47,15 +38,7 @@ public:
 
     __device__ BVHNode(Hittable** objects, int n, float time0, float time1, curandState* local_rand_state) {
         int axis = int(3 * curand_uniform(local_rand_state));
-
-        if (axis == 0) {
-            thrust::sort(objects, objects + n, BoxCmp(1));
-        }
-        else if (axis == 1) {
-            thrust::sort(objects, objects + n, BoxCmp(2));
-        } else {
-            thrust::sort(objects, objects + n, BoxCmp(3));
-        }
+        sort_hittables(objects, n, axis);
 
         if (n == 1) {
             left = right = objects[0];

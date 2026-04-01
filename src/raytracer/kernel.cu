@@ -123,15 +123,17 @@ KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int sam
 
 	d_world = thrust::device_new<World*>();
 
+	// Increase device heap for device-side new in create_world/BVH construction
+	size_t heap_size;
+	check_cuda_errors(cudaDeviceGetLimit(&heap_size, cudaLimitMallocHeapSize));
+	if (heap_size < 64 * 1024 * 1024) {
+		check_cuda_errors(cudaDeviceSetLimit(cudaLimitMallocHeapSize, 64 * 1024 * 1024));
+	}
+
 	create_world<<<1, 1>>> (d_world, d_camera, camera_info);
 
 	check_cuda_errors(cudaGetLastError());
 	check_cuda_errors(cudaDeviceSynchronize());
-
-	// Extract raw device pointer for Camera to use with cudaMemcpyAsync
-	Camera* h_cam_ptr;
-	check_cuda_errors(cudaMemcpy(&h_cam_ptr, d_camera.get(), sizeof(Camera*), cudaMemcpyDeviceToHost));
-	d_camera_raw = h_cam_ptr;
 
 	int tx = 8;
 	int ty = 8;
@@ -164,9 +166,18 @@ void KernelInfo::resize(int nx, int ny) {
 	check_cuda_errors(cudaDeviceSynchronize());
 }
 
+__global__ void set_device_camera(thrust::device_ptr<Camera*> d_camera, glm::vec3 position, glm::vec3 forward, glm::vec3 up, float aspect_ratio) {
+	if (threadIdx.x == 0 && blockIdx.x == 0) {
+		((Camera*) (*d_camera))->set_position(position);
+		((Camera*) (*d_camera))->set_rotation(forward, up, aspect_ratio);
+	}
+}
+
 void KernelInfo::set_camera(glm::vec3 position, glm::vec3 forward, glm::vec3 up) {
-	Camera host_cam(position, forward, up, camera_info.fov, (float)nx / (float)ny);
-	check_cuda_errors(cudaMemcpyAsync(d_camera_raw, &host_cam, sizeof(Camera), cudaMemcpyHostToDevice));
+	set_device_camera<<<1, 1>>> (d_camera, position, forward, up, (float) nx / (float) ny);
+	check_cuda_errors(cudaGetLastError());
+	// No cudaDeviceSynchronize needed — stream ordering guarantees this
+	// completes before the next raytrace kernel on the same stream
 }
 
 void KernelInfo::render() {
