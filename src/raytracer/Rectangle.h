@@ -5,7 +5,7 @@
 #include "Material.h"
 #include "AABB.h"
 
-class Rectangle : public Hittable {
+class Rect : public Hittable {
 public:
 	glm::vec3 Q;       // corner point
 	glm::vec3 u, v;    // edge vectors
@@ -16,9 +16,9 @@ public:
 	float D;
 	glm::vec3 w;
 
-	__device__ Rectangle() {}
+	__device__ Rect() {}
 
-	__device__ Rectangle(glm::vec3 Q, glm::vec3 u, glm::vec3 v, Material* mat)
+	__device__ Rect(glm::vec3 Q, glm::vec3 u, glm::vec3 v, Material* mat)
 		: Q(Q), u(u), v(v), mat_ptr(mat) {
 		glm::vec3 n = glm::cross(u, v);
 		normal = glm::normalize(n);
@@ -26,7 +26,7 @@ public:
 		w = n / glm::dot(n, n);
 	}
 
-	__device__ ~Rectangle() {
+	__device__ ~Rect() {
 		delete mat_ptr;
 	}
 

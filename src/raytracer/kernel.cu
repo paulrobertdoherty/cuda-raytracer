@@ -79,7 +79,7 @@ __global__ void create_world(thrust::device_ptr<World*> d_world, thrust::device_
 		device_world->add(new Sphere(glm::vec3(0, 3, -1), 1.0f, new Emissive(glm::vec3(4.0f, 4.0f, 4.0f))));
 
 		// Emissive area light rectangle
-		device_world->add(new Rectangle(
+		device_world->add(new Rect(
 			glm::vec3(-1, 3, -2), glm::vec3(2, 0, 0), glm::vec3(0, 0, 2),
 			new Emissive(glm::vec3(4.0f, 4.0f, 4.0f))));
 
