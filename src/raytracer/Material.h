@@ -47,6 +47,9 @@ __device__ glm::vec3 refract(const glm::vec3& uv, const glm::vec3& n, float etai
 class Material {
 public:
 	__device__ virtual bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, curandState* local_rand_state) const = 0;
+	__device__ virtual glm::vec3 emitted(float u, float v, const glm::vec3& p) const {
+		return glm::vec3(0.0f);
+	}
 };
 
 class Lambertian : public Material {
@@ -118,4 +121,19 @@ private:
 		r0 = r0 * r0;
 		return r0 + (1.0f - r0) * powf((1.0f - cosine), 5);
 	}
+};
+
+class Emissive : public Material {
+	Texture* emit;
+	float intensity;
+public:
+	__device__ Emissive(Texture* a, float i = 1.0f) : emit(a), intensity(i) {}
+	__device__ Emissive(glm::vec3 c, float i = 1.0f) : emit(new SolidColor(c)), intensity(i) {}
+	__device__ bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, curandState* local_rand_state) const override {
+		return false;
+	}
+	__device__ glm::vec3 emitted(float u, float v, const glm::vec3& p) const override {
+		return intensity * emit->value(u, v, p);
+	}
+	__device__ ~Emissive() { delete emit; }
 };

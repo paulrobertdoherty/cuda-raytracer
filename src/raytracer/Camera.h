@@ -6,7 +6,7 @@
 #define M_PI 3.14159265358979323846264338327950288f
 
 
-__device__ inline float degrees_to_radians(float angleInDegrees) {
+__host__ __device__ inline float degrees_to_radians(float angleInDegrees) {
 	return ((angleInDegrees)*M_PI / 180.0f);
 }
 
@@ -19,7 +19,7 @@ public:
 	float viewport_height;
 	float viewport_width;
 
-	__device__ Camera(glm::vec3 origin, glm::vec3 forward, glm::vec3 up, float vfov, float aspect_ratio) {
+	__host__ __device__ Camera(glm::vec3 origin, glm::vec3 forward, glm::vec3 up, float vfov, float aspect_ratio) {
 		float theta = degrees_to_radians(vfov);
 		float h = tan(theta / 2.0f);
 		viewport_height = 2.0f * h;

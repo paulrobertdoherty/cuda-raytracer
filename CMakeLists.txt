@@ -1,4 +1,4 @@
-﻿cmake_minimum_required (VERSION 3.8)
+﻿cmake_minimum_required (VERSION 3.24)
 
 # Enable Hot Reload for MSVC compilers if supported.
 if (POLICY CMP0141)
@@ -28,8 +28,12 @@ file(GLOB_RECURSE HEADER_FILES
 # Add source to this project's executable.
 add_executable(${PROJECT_NAME} ${HEADER_FILES} ${SOURCE_FILES})
 
-# Set CUDA architecture to the host's GPU architecture
-set_target_properties(${PROJECT_NAME} PROPERTIES CUDA_ARCHITECTURES 86)
+# Set CUDA architecture to the host's GPU architecture (default: native, override with -DCMAKE_CUDA_ARCHITECTURES=XX)
+if(DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set_target_properties(${PROJECT_NAME} PROPERTIES CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+else()
+    set_target_properties(${PROJECT_NAME} PROPERTIES CUDA_ARCHITECTURES native)
+endif()
 
 # CUDA 13+ CCCL requires C++17
 set_target_properties(${PROJECT_NAME} PROPERTIES
