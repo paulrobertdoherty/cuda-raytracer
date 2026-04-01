@@ -1,130 +1,137 @@
-# A real-time GPU accelerated ray tracer written in C++ and CUDA
-***A real-time GPU accelerated ray tracer written in C++ and CUDA with the help of OpenGL for rendering to the screen.***
+# CUDA Ray Tracer
 
+A real-time GPU-accelerated path tracer written in C++ and CUDA, with OpenGL for display.
 
-Before doing this CUDA project, I had a little bit of experience in the graphics world.
-Namely, I had written [a '*real-time*' ray tracer](https://github.com/Ancientkingg/rust-raytracer) in Rust which ran on the CPU. 
-In that project I managed to finish the [first book](https://raytracing.github.io/books/RayTracingInOneWeekend.html) of the 'Raytracing in X' series, which was a great learning experience.
-After finishing however, I wanted to expand upon my capabilities and create a more complex ray tracer which maybe was also a bit more '*real-time*' than the one written in Rust.
-I found out about CUDA and decided to use it to write a GPU-accelerated ray tracer with more features. Staring at a picture of a sphere on a plane seems a bit boring to me though, 
-so I decided to make the renderer real-time with the help of OpenGL.
+This is a fork of [Ancientkingg/cuda-raytracer](https://github.com/Ancientkingg/cuda-raytracer) and an experiment in using [Claude Code](https://docs.anthropic.com/en/docs/claude-code) to extend a ray tracer. The original project implemented a real-time CUDA path tracer with movable camera, temporal accumulation, BVH acceleration, and textures. This fork uses Claude Code to add new rendering features, primitives, and performance improvements on top of that foundation.
 
+## What Claude Code added
 
-The project uses CMake as the build system to support portability and for me personally to get more familiar with CMake.
-My aim for this project was for others to be able to simply clone the repository and build the project without much fuss.
+- **Emissive materials** for area lights (previously only sky gradient illumination)
+- **Rectangle and triangle primitives** (enabling flat area lights and mesh building blocks)
+- **Adaptive samples-per-pixel** that scales SPP dynamically to maintain a target frame rate
+- **Temporal reprojection** so camera movement blends smoothly instead of resetting to full noise
+- **Command-line parameters** for width, height, SPP, max depth, and FOV
+- **CUDA 13+ compatibility** fixes (BVH sort, MSVC conforming preprocessor, `CUDA_ARCHITECTURES native`)
 
+## Building
 
-## Development walkthrough
+Requires:
+- CMake 3.24+
+- CUDA Toolkit (12+ recommended, 13+ tested)
+- A C++17 compiler (MSVC on Windows, GCC/Clang on Linux)
+- An NVIDIA GPU
 
-### Getting started
-Before getting started with actually writing the renderer, I installed the latest version of the [CUDA toolkit](https://developer.nvidia.com/cuda-downloads) 
-and created a CMake project in Visual Studio 2022.
-
-The next step in the process was then to configure CMake to include the necessary libraries for OpenGL to work correctly.
-I found a [very nice template repository](https://github.com/Shot511/OpenGLSampleCmake) that had everything I was looking for,
-with which I configured my own CMake project.
-
-After setting up the necessary ground work, I started with getting a simple window to draw to the screen.
-With the help of the [OpenGL tutorial](https://learnopengl.com/Getting-started/Creating-a-window) from [LearnOpenGL.com](https://learnopengl.com/), I managed to get a simple window up and running.
-
-![Window with black screen](/docs/images/black_window.png)
-
-At the moment, the window isn't showing anything all too exciting though, so let's change that by adding a quad to the screen onto which we can draw an image.
-
-### Drawing a quad
-I set up a `Quad` class along with a `Shader` class that I got from the [OpenGL template repository](https://learnopengl.com/code_viewer_gh.php?code=includes/learnopengl/shader.h).
-The `Quad` class sets up a quad with the help of a vertex array object (VAO) and a vertex buffer object (VBO) and draws it to the screen.
-The `Shader` class compiles a vertex and fragment shader and links them together into a shader program.
-
-Normally the quad would draw the ray traced output image as a texture, but since no ray tracing has been implemented yet at this point. 
-I decided to modify the fragment shader to draw a simple gradient to showcase my progress.
-```glsl
-#version 330 core
-out vec4 FragColor;
-
-in vec2 TexCoords;
-
-uniform sampler2D screenTexture;
-
-void main()
-{
-    vec3 col = texture(screenTexture, TexCoords).rgb;
-    FragColor = vec4(TexCoords.x, TexCoords.y, 0.0, 1.0);
-}
+```bash
+cmake --preset x64-release
+cmake --build out/build/x64-release
 ```
 
-This results in the following image being drawn to the screen:
+## Running
 
-![Window with gradient](/docs/images/gradient_window.png)
+```bash
+cd out/build/x64-release
+./cuda-raytracer --width 1280 --height 720 --samples 8 --depth 50 --fov 75
+```
 
-The plan is to let CUDA draw the ray traced image to a texture. 
-We then use OpenGL to draw that texture to the quad on the screen.
-This also enables us to add post-processing on top of the image in later stages.
+All parameters are optional (defaults: 800x600, 3 SPP, depth 50, FOV 90). The `--samples` value is the maximum SPP; the adaptive controller scales it down automatically if the GPU can't sustain 30 fps.
 
-### The ray tracing kernel
-The next step is to write the ray tracing kernel in CUDA.
-The kernel will basically do all of the ray tracing, output the result to a buffer and hand it over to OpenGL to draw to the screen.
+### Controls
 
-I found a nice guide that adapted the [first book](https://raytracing.github.io/books/RayTracingInOneWeekend.html) of the 'Raytracing in X' series to CUDA.
-I used [this guide](https://developer.nvidia.com/blog/accelerated-ray-tracing-cuda/) as a starting point for my own kernel, which I then adapted to my own needs.
+| Key | Action |
+|-----|--------|
+| W/A/S/D | Move horizontally |
+| Space / Ctrl | Move up / down |
+| Mouse | Look around |
+| Q / E | Roll camera |
+| Esc | Quit |
 
-After working through both guides and some debugging of my own I managed to get the window to draw a scene in real-time.
+## Architecture
 
-![Window showing a ray traced scene of spheres](/docs/images/raytraced_window.png)
+```
+                         +-----------+
+                         |  main.cpp |  Parse CLI args, create Window
+                         +-----+-----+
+                               |
+                         +-----v-----+
+                         | Window    |  GLFW window, main loop, adaptive SPP
+                         +-----+-----+
+                               |
+                 +-------------+-------------+
+                 |                           |
+           +-----v-----+             +------v------+
+           |   Input    |             | tick_render |  4-stage OpenGL pipeline
+           +-----+------+             +------+------+
+                 |                           |
+     camera movement                +--------+--------+--------+
+     & velocity decay               |        |        |        |
+                 |               Render   Copy to  Accumulate  Display
+           +-----v------+       current   blit     blend to    to
+           | KernelInfo  |       frame    quad     accum FBO   screen
+           | .set_camera |         |
+           +-------------+   +----v----+
+                             | raytrace |  CUDA kernel (per-pixel)
+                             +----+-----+
+                                  |
+                    +-------------+-------------+
+                    |             |              |
+              +-----v---+  +-----v------+  +----v-------+
+              | Camera  |  | FrameBuffer|  | World      |
+              | get_ray |  | .color()   |  | .hit()     |
+              +---------+  +-----+------+  +-----+------+
+                                 |               |
+                           recursive         +---v---+
+                           bounce loop       |  BVH  |  AABB tree traversal
+                                 |           +---+---+
+                    +------------+---+           |
+                    |            |   |      +----+----+----+----+
+               on hit:      on miss:  max  |    |    |    |    |
+               emit +       sky      depth | Sphere Rect Triangle ...
+               scatter      gradient       +----+----+----+----+
+                    |                            |
+              +-----v--------+             +-----v--------+
+              |  Materials   |             |  Hittable    |
+              | Lambertian   |             | .hit()       |
+              | Metal        |             | .bounding_box|
+              | Dielectric   |             +--------------+
+              | Emissive     |
+              +--------------+
 
-### A movable camera
-Even though our renderer is real-time now, it is still not very interactive.
-The next step was to make the camera rotatable and movable, so that we can actually look around and enjoy the scene from different angles.
-The camera supports WASD to move horizontally, Q and E to roll the camera, and, CTRL and SPACE to move vertically.
-It uses a sort of motion based system to move the camera, which makes the movement feel somewhat natural.
+Accumulation shader (GLSL):
+  Static camera  -> progressive blend toward converged image (up to 500 frames)
+  Moving camera  -> exponential blend (20% new / 80% old) to reduce ghosting
+```
 
-https://github.com/Ancientkingg/CudaRaytrace/assets/67058024/333f98e2-c043-4ecf-881c-7044380091dd
+### Source layout
 
-The video above is a recording of the window with a resolution of 800x600 with 3 samples per pixel.
-It runs at about 80-100 fps on my machine with an RTX 3070. Even though each pixel samples 3 rays, there is still some
-visible noise in the video, *even with all of the video compression*, especially close around the spheres.
-To somewhat mitigate this, my plan was to add a very crude implementation of temporal accumulation.
+```
+src/
+  main.cpp                  Entry point, CLI argument parsing
+  Window.cpp/.h             GLFW window, main loop, adaptive SPP, temporal blend
+  Input.cpp/.h              Keyboard/mouse input, camera velocity
+  Quad.cpp/.h               OpenGL quad with PBO for CUDA-GL interop
+  Shader.h                  OpenGL shader loader
+  cuda_errors.cpp/.h        CUDA error checking helpers
 
-### Stacking frames
-I am not an expert in graphics programming so there will most likely be some mistakes in my explanation, but [temporal accumulation](https://teamwisp.github.io/research/temporal_accumulation.html) 
-in essence is a way to reduce noise in a rendered image by averaging out multiple frames. You can compare it to a long exposure shot in photography.
-Each frame is rendered and stacked on top of each other, which results in a smoother image with less visible noise. 
+  raytracer/
+    kernel.cu/.h            CUDA kernels: raytrace, create_world, set_device_camera
+    Camera.h                Camera with position, rotation, FOV
+    Ray.h                   Ray struct (origin + direction)
+    FrameBuffer.h           Per-pixel color computation (recursive bounce loop)
+    World.h                 Scene container with optional BVH root
+    BVHNode.h               Bounding volume hierarchy (AABB tree)
+    AABB.h                  Axis-aligned bounding box (slab intersection)
+    Hittable.h              Base class + HitRecord
+    Sphere.h                Sphere primitive
+    Rectangle.h             Quad primitive (corner + two edge vectors)
+    Triangle.h              Triangle primitive (Moller-Trumbore intersection)
+    Material.h              Lambertian, Metal, Dielectric, Emissive
+    Texture.h               SolidColor, CheckerTexture
 
-One problem that arises from this, is that with a moving camera, frames will not align (perfectly) leaving us with a blurry mess.
-There are some advanced techniques to reproject frames between positions, but since I am pretty novice in this area, I decided to go for the simplest approach that I could think of.
+  shaders/
+    rendertype_screen.*     Pass-through vertex/fragment shader
+    rendertype_accumulate.* Temporal accumulation with motion-aware blending
+```
 
-The renderer will accumulate frames as long as the camera is not moving. 
-Once it moves (or rotates), the accumulated frames will be discarded and the renderer will (try to) start accumulating frames again.
-To implement temporal accumulation I decided to make use of the shader pipeline we set up earlier.
+## Original project
 
-The ray tracing kernel will continuously output frames to a buffer, which will then be used as a texture by OpenGL to draw to the screen.
-A second buffer is used to accumulate frames. This buffer is also used as a texture, but it is not drawn directly to the screen.
-
-https://github.com/Ancientkingg/CudaRaytrace/assets/67058024/0c14d1b8-510c-4a97-b8dc-bf65aa019d9d
-
-As you can see after a set amount of time the image seems to clear up and the noise starts to fade away.
-The accumulated frames are discarded as soon as the camera moves or rotates, so that we don't get a blurry mess like this:
-
-https://github.com/Ancientkingg/CudaRaytrace/assets/67058024/79fe5447-ee7f-42bf-9b3d-b24015b5a090
-
-### Improving code quality
-At this point in the project, I realized that the code quality was not very good. 
-When I started writing this ray tracer I was still very novice in writing actual C++ code, which resulted in a lot of bad practices creeping into the code.
-Particularly, the high usage of raw device pointers and the lack of proper memory management was a big problem.
-Before continuing with the project, I decided to try to rewrite the code to improve memory management and to make the code more readable.
-
-I used valgrind and Nvidia's compute sanitizer to detect memory leaks and managed to fix all of them by using RAII.
-
-### Adding a BVH (The next week)
-The next step was to add a bounding volume hierarchy (BVH) to the ray tracer. 
-This would allow us to render more complex scenes with a lot more objects in them.
-I skipped some parts of the "Raytracing The Next Week" since they seemed irrelevant for my **real-time** ray tracer, where I did not need to fake movement.
-
-### Textures
-The next step was to add textures to the ray tracer. I started with making a simple chekerboard texture that I applied to a sphere in my scene.
-
-![Checkerboard image](./docs/images/checkered_texture.png)
-
-My ray tracer was starting to take shape, but I still had a lot of work to do.
-
-
+The original ray tracer by [Ancientkingg](https://github.com/Ancientkingg) implements the core rendering pipeline following the [Ray Tracing in One Weekend](https://raytracing.github.io/books/RayTracingInOneWeekend.html) series adapted to CUDA, with real-time display via OpenGL interop, a movable camera, BVH acceleration, and temporal frame accumulation. See the [original repository](https://github.com/Ancientkingg/cuda-raytracer) for the full development walkthrough.
