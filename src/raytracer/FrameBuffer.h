@@ -41,10 +41,12 @@ __device__ void FrameBuffer::writePixel(int x, int y, glm::vec4 pixel) {
 __device__ glm::vec3 FrameBuffer::color(const Ray& r, Hittable* world, curandState* local_rand_state) {
 	Ray cur_ray = r;
 	glm::vec3 cur_attenuation = glm::vec3(1.0, 1.0, 1.0);
+	glm::vec3 accumulated_color = glm::vec3(0.0f);
 	// ray depth
 	for (int i = 0; i < max_depth; i++) {
 		HitRecord rec;
 		if (world->hit(cur_ray, 0.001f, FLT_MAX, rec)) {
+			accumulated_color += cur_attenuation * rec.mat_ptr->emitted(rec.u, rec.v, rec.p);
 			Ray scattered;
 			glm::vec3 attenuation;
 			if (rec.mat_ptr->scatter(cur_ray, rec, attenuation, scattered, local_rand_state)) {
@@ -52,16 +54,16 @@ __device__ glm::vec3 FrameBuffer::color(const Ray& r, Hittable* world, curandSta
 				cur_ray = scattered;
 			}
 			else {
-				return glm::vec3(0.0f, 0.0f, 0.0f);
+				return accumulated_color;
 			}
 		}
 		else {
 			glm::vec3 unit_direction = glm::normalize(cur_ray.direction);
 			float t = 0.5f * (unit_direction.y + 1.0f);
 			glm::vec3 c = (1.0f - t) * glm::vec3(1.0, 1.0, 1.0) + t * glm::vec3(0.5, 0.7, 1.0);
-			return cur_attenuation * c;
+			return accumulated_color + cur_attenuation * c;
 		}
 	}
-	return glm::vec3(0.0f, 0.0f, 0.0f);
+	return accumulated_color;
 	}
 #endif

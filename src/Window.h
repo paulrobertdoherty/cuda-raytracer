@@ -4,6 +4,8 @@
 #include <GLFW/glfw3.h>
 #include <chrono>
 
+#include <algorithm>
+
 #include "Shader.h"
 #include "Quad.h"
 #include "Input.h"
@@ -37,6 +39,9 @@ private:
 
 	Input _input;
 	int _frame_count;
+	int _max_spp;
+	float _smoothed_frame_time;
+	bool _camera_moving;
 	std::chrono::steady_clock::time_point _last_frame;
 
 

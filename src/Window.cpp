@@ -11,6 +11,9 @@ Window::Window(unsigned int width, unsigned int height, int samples, int max_dep
 	Window::max_depth = max_depth;
 	Window::fov = fov;
 	Window::_frame_count = 0;
+	Window::_max_spp = samples;
+	Window::_smoothed_frame_time = 16.67f;
+	Window::_camera_moving = false;
 }
 
 int Window::init_glfw() {
@@ -130,7 +133,8 @@ void Window::tick_input(float t_diff) {
 	//input
 	_input.process_quit(_window);
 	_input.process_camera_movement(_window, *(_current_frame->_renderer), t_diff);
-	if (_input.has_camera_moved()) _frame_count = 1;
+	_camera_moving = _input.has_camera_moved();
+	if (_camera_moving) _frame_count = 1;
 }
 
 void copyFrameBufferTexture(int width, int height, int fboIn, int textureIn, int fboOut, int textureOut) {
@@ -180,6 +184,7 @@ void Window::tick_render() {
 	glBindTexture(GL_TEXTURE_2D, _blit_quad->texture);
 	_accum_shader->use();
 	glUniform1i(glGetUniformLocation(_accum_shader->ID, "frameCount"), _frame_count);
+	glUniform1i(glGetUniformLocation(_accum_shader->ID, "cameraMoving"), _camera_moving ? 1 : 0);
 	glDrawArrays(GL_TRIANGLES, 0, 6);
 
 	// Render result to screen
@@ -203,6 +208,15 @@ void Window::tick() {
 
 	// Print FPS
 	//std::cout << "\r" << std::fixed << std::setprecision(2) << 1000.0 / t_diff << " fps";
+
+	// Adaptive SPP based on frame time budget
+	if (t_diff > 0.0f)
+		_smoothed_frame_time = 0.7f * _smoothed_frame_time + 0.3f * t_diff;
+	float target_ms = 33.3f;
+	int new_spp = (int)(_max_spp * target_ms / _smoothed_frame_time);
+	new_spp = std::max(1, std::min(_max_spp, new_spp));
+	samples = new_spp;
+	_current_frame->_renderer->samples = new_spp;
 
 	// Input
 	tick_input(t_diff);

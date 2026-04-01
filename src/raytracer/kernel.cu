@@ -13,6 +13,8 @@
 #include "FrameBuffer.h"
 #include "Ray.h"
 #include "Sphere.h"
+#include "Rectangle.h"
+#include "Triangle.h"
 #include "World.h"
 #include "Camera.h"
 #include "BVHNode.h"
@@ -73,6 +75,19 @@ __global__ void create_world(thrust::device_ptr<World*> d_world, thrust::device_
 			)
 		));
 
+		// Emissive sphere light
+		device_world->add(new Sphere(glm::vec3(0, 3, -1), 1.0f, new Emissive(glm::vec3(4.0f, 4.0f, 4.0f))));
+
+		// Emissive area light rectangle
+		device_world->add(new Rectangle(
+			glm::vec3(-1, 3, -2), glm::vec3(2, 0, 0), glm::vec3(0, 0, 2),
+			new Emissive(glm::vec3(4.0f, 4.0f, 4.0f))));
+
+		// Blue triangle
+		device_world->add(new Triangle(
+			glm::vec3(-2, 0, -2), glm::vec3(-1, 2, -2), glm::vec3(0, 0, -2),
+			new Lambertian(glm::vec3(0.1f, 0.2f, 0.8f))));
+
 		curandState rand_state;
 		curand_init(1984, 0, 0, &rand_state);
 		device_world->build_bvh(&rand_state);
@@ -113,6 +128,11 @@ KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int sam
 	check_cuda_errors(cudaGetLastError());
 	check_cuda_errors(cudaDeviceSynchronize());
 
+	// Extract raw device pointer for Camera to use with cudaMemcpyAsync
+	Camera* h_cam_ptr;
+	check_cuda_errors(cudaMemcpy(&h_cam_ptr, d_camera.get(), sizeof(Camera*), cudaMemcpyDeviceToHost));
+	d_camera_raw = h_cam_ptr;
+
 	int tx = 8;
 	int ty = 8;
 
@@ -144,17 +164,9 @@ void KernelInfo::resize(int nx, int ny) {
 	check_cuda_errors(cudaDeviceSynchronize());
 }
 
-__global__ void set_device_camera(thrust::device_ptr<Camera*> d_camera, glm::vec3 position, glm::vec3 forward, glm::vec3 up, float aspect_ratio) {
-	if (threadIdx.x == 0 && blockIdx.x == 0) {
-		((Camera*) (*d_camera))->set_position(position);
-		((Camera*) (*d_camera))->set_rotation(forward, up, aspect_ratio);
-	}
-}
-
 void KernelInfo::set_camera(glm::vec3 position, glm::vec3 forward, glm::vec3 up) {
-	set_device_camera<<<1, 1>>> (d_camera, position, forward, up, (float) nx / (float) ny);
-	check_cuda_errors(cudaGetLastError());
-	check_cuda_errors(cudaDeviceSynchronize());
+	Camera host_cam(position, forward, up, camera_info.fov, (float)nx / (float)ny);
+	check_cuda_errors(cudaMemcpyAsync(d_camera_raw, &host_cam, sizeof(Camera), cudaMemcpyHostToDevice));
 }
 
 void KernelInfo::render() {
