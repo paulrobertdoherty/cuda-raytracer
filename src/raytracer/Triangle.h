@@ -50,6 +50,17 @@ public:
 		return true;
 	}
 
+	__device__ bool sample_point(curandState* rng, glm::vec3& point, glm::vec3& normal_out) const override {
+		float u_r = curand_uniform(rng);
+		float v_r = curand_uniform(rng);
+		if (u_r + v_r > 1.0f) { u_r = 1.0f - u_r; v_r = 1.0f - v_r; }
+		point = v0 + u_r * (v1 - v0) + v_r * (v2 - v0);
+		normal_out = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+		return true;
+	}
+
+	__device__ float area() const override { return 0.5f * glm::length(glm::cross(v1 - v0, v2 - v0)); }
+
 	__device__ bool bounding_box(float t0, float t1, AABB& output_box) const override {
 		glm::vec3 mn = glm::min(glm::min(v0, v1), v2);
 		glm::vec3 mx = glm::max(glm::max(v0, v1), v2);

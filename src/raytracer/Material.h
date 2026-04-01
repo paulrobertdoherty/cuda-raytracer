@@ -50,6 +50,7 @@ public:
 	__device__ virtual glm::vec3 emitted(float u, float v, const glm::vec3& p) const {
 		return glm::vec3(0.0f);
 	}
+	__device__ virtual bool is_specular() const { return false; }
 };
 
 class Lambertian : public Material {
@@ -79,6 +80,7 @@ class Metal : public Material {
 	float fuzz;
 public:
 	__device__ Metal(const glm::vec3& a, float f) : albedo(a) { if (f < 1) fuzz = f; else fuzz = 1; }
+	__device__ bool is_specular() const override { return true; }
 	__device__ virtual bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, curandState* local_rand_state) const {
 		glm::vec3 reflected = reflect(glm::normalize(r_in.direction), rec.normal);
 		scattered = Ray(rec.p, reflected + fuzz * random_in_unit_sphere(local_rand_state));
@@ -92,6 +94,7 @@ public:
 	float ir; // index of refraction
 
 	__device__ Dielectric(float index_of_refraction): ir(index_of_refraction) {}
+	__device__ bool is_specular() const override { return true; }
 
 	__device__ virtual bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, curandState* local_rand_state) const {
 		attenuation = glm::vec3(1.0f, 1.0f, 1.0f);

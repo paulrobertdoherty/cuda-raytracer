@@ -58,6 +58,18 @@ public:
 		return true;
 	}
 
+	__device__ bool sample_point(curandState* rng, glm::vec3& point, glm::vec3& normal_out) const override {
+		float z = 1.0f - 2.0f * curand_uniform(rng);
+		float r_xy = sqrtf(fmaxf(0.0f, 1.0f - z * z));
+		float phi = 2.0f * M_PI * curand_uniform(rng);
+		glm::vec3 dir(r_xy * cosf(phi), r_xy * sinf(phi), z);
+		point = center + radius * dir;
+		normal_out = dir;
+		return true;
+	}
+
+	__device__ float area() const override { return 4.0f * M_PI * radius * radius; }
+
 	__device__ static void get_sphere_uv(const glm::vec3& p, float& u, float& v) {
 		float theta = acosf(-p.y);
 		float phi = atan2f(-p.z, p.x) + M_PI;

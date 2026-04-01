@@ -8,7 +8,7 @@ uniform sampler2D lastFrameTex;
 uniform int frameCount;
 uniform int cameraMoving;
 
-#define MAX_FRAMES 500.0f
+#define MAX_FRAMES 5000.0f
 
 void main()
 {

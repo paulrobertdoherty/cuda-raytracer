@@ -76,12 +76,16 @@ __global__ void create_world(thrust::device_ptr<World*> d_world, thrust::device_
 		));
 
 		// Emissive sphere light
-		device_world->add(new Sphere(glm::vec3(0, 3, -1), 1.0f, new Emissive(glm::vec3(4.0f, 4.0f, 4.0f))));
+		Sphere* light_sphere = new Sphere(glm::vec3(0, 3, -1), 1.0f, new Emissive(glm::vec3(4.0f, 4.0f, 4.0f)));
+		device_world->add(light_sphere);
+		device_world->add_light(light_sphere);
 
 		// Emissive area light rectangle
-		device_world->add(new Rect(
+		Rect* light_rect = new Rect(
 			glm::vec3(-1, 3, -2), glm::vec3(2, 0, 0), glm::vec3(0, 0, 2),
-			new Emissive(glm::vec3(4.0f, 4.0f, 4.0f))));
+			new Emissive(glm::vec3(4.0f, 4.0f, 4.0f)));
+		device_world->add(light_rect);
+		device_world->add_light(light_rect);
 
 		// Blue triangle
 		device_world->add(new Triangle(
@@ -129,6 +133,9 @@ KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int sam
 	if (heap_size < 64 * 1024 * 1024) {
 		check_cuda_errors(cudaDeviceSetLimit(cudaLimitMallocHeapSize, 64 * 1024 * 1024));
 	}
+
+	// Increase per-thread stack size for NEE (extra HitRecords + BVH recursion)
+	check_cuda_errors(cudaDeviceSetLimit(cudaLimitStackSize, 8192));
 
 	create_world<<<1, 1>>> (d_world, d_camera, camera_info);
 
@@ -185,8 +192,8 @@ void KernelInfo::render() {
 	check_cuda_errors(cudaGraphicsMapResources(1, &resources));
 	check_cuda_errors(cudaGraphicsResourceGetMappedPointer((void**)&(frame_buffer->device_ptr), &(frame_buffer->buffer_size), resources));
 
-	int tx = 32;
-	int ty = 32;
+	int tx = 16;
+	int ty = 16;
 
 	dim3 blocks(nx / tx + 1, ny / ty + 1);
 	dim3 threads(tx, ty);

@@ -18,11 +18,18 @@ public:
     Hittable** objects;
     Hittable* bvh_root;
 
+    Hittable** lights;
+    int num_lights;
+    int lights_capacity;
+
     __device__ World() {
         objects = new Hittable*[20];
         number_of_objects = 0;
         capacity = 20;
         bvh_root = nullptr;
+        lights = new Hittable*[20];
+        num_lights = 0;
+        lights_capacity = 20;
     }
 
     __device__ World(int capacity) {
@@ -30,6 +37,9 @@ public:
         number_of_objects = 0;
         capacity = capacity;
         bvh_root = nullptr;
+        lights = new Hittable*[20];
+        num_lights = 0;
+        lights_capacity = 20;
     }
 
     __device__ ~World();
@@ -65,6 +75,12 @@ public:
 		return true;
     }
 
+    __device__ bool add_light(Hittable* object) {
+        if (num_lights >= lights_capacity) return false;
+        lights[num_lights++] = object;
+        return true;
+    }
+
 };
 
 /*
@@ -93,6 +109,7 @@ __device__ World::~World() {
         }
     }
     delete[] objects;
+    delete[] lights;
 }
 
 __device__ AABB surrounding_box(AABB box0, AABB box1) {
