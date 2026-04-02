@@ -1,7 +1,33 @@
+// ============================================================
+// Debug flags — uncomment to enable the corresponding feature.
+// IMPORTANT: these MUST be defined before any #include so that
+// Window.h picks up the guarded member variables.
+//
+//   DEBUG_ACCUMULATION : frame-by-frame GL diagnostics + pixel
+//                        readback from both kernel output and
+//                        the accumulated buffer.
+//                        Also uncomment DEBUG_ACCUMULATION in
+//                        kernel.cu to get matching CUDA logs.
+//
+//   DISABLE_PROGRESS   : suppresses the "\rRendering: XX%"
+//                        stdout output entirely so you can rule
+//                        out stdout flushing as a cause.
+//
+//   CONVERGENCE_TEST   : after accumulation completes, does one
+//                        full-SPP reference kernel call and
+//                        compares its center pixel against the
+//                        accumulated center pixel, printing
+//                        PASS / FAIL with the numeric diff.
+// ============================================================
+#define DEBUG_ACCUMULATION
+#define DISABLE_PROGRESS
+#define CONVERGENCE_TEST
+
 #include "Window.h"
 
 #include <iostream>
 #include <iomanip>
+#include <cmath>
 #include <memory>
 
 Window::Window(unsigned int width, unsigned int height, int samples, int max_depth, float fov) {
@@ -138,6 +164,9 @@ void Window::tick_input(float t_diff) {
 		if (_render_mode == RenderMode::PREVIEW) {
 			_render_mode = RenderMode::RENDER_FINAL;
 			_frame_count = 1;
+#ifdef CONVERGENCE_TEST
+			_convergence_test_done = false;
+#endif
 		} else if (_render_mode == RenderMode::IDLE) {
 			_render_mode = RenderMode::PREVIEW;
 		}
@@ -173,6 +202,23 @@ void copyFrameBufferTexture(int width, int height, int fboIn, int textureIn, int
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
 }
 
+// Helper: read back one RGBA float pixel from an FBO at (x, y).
+// Returns false and leaves out[] unchanged if the FBO is incomplete.
+static bool readback_pixel(unsigned int fbo, int x, int y, float out[4]) {
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+	glReadBuffer(GL_COLOR_ATTACHMENT0);
+	GLenum status = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER);
+	if (status != GL_FRAMEBUFFER_COMPLETE) {
+		std::cout << "[GL] FBO " << fbo << " incomplete, status=0x"
+		          << std::hex << status << std::dec << "\n";
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+		return false;
+	}
+	glReadPixels(x, y, 1, 1, GL_RGBA, GL_FLOAT, out);
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+	return true;
+}
+
 void Window::tick_render() {
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glDisable(GL_DEPTH_TEST);
@@ -184,14 +230,60 @@ void Window::tick_render() {
 		// Always render 1 SPP per frame (fast, no freeze)
 		_current_frame->render_kernel(true);
 
-		// Copy accumulated frames to another texture so that we can sample it
-		copyFrameBufferTexture(Window::width, Window::height, _accum_frame->framebuffer, _accum_frame->texture, _blit_quad->framebuffer, _blit_quad->texture);
+#ifdef DEBUG_ACCUMULATION
+		// ----------------------------------------------------------
+		// Log raw kernel output for the center pixel (1-SPP frame).
+		// Note: _current_frame is GL_RGBA8, BGRA-uploaded → read as
+		// RGBA gives correct channel order after GL swizzle.
+		// ----------------------------------------------------------
+		if (_render_mode == RenderMode::RENDER_FINAL) {
+			float cur_px[4] = {0};
+			if (readback_pixel(_current_frame->framebuffer, width / 2, height / 2, cur_px)) {
+				std::cout << "[GL] kernel_out=(" << cur_px[0] << ", " << cur_px[1]
+				          << ", " << cur_px[2] << ")\n";
+			}
+			GLenum gl_err = glGetError();
+			if (gl_err != GL_NO_ERROR)
+				std::cout << "[GL] glGetError after kernel readback: 0x"
+				          << std::hex << gl_err << std::dec << "\n";
+		}
+#endif
+
+		// Ping-pong: swap so _blit_quad holds the previous accumulated frame
+		// and _accum_frame becomes the new render target
+#ifdef DEBUG_ACCUMULATION
+		if (_render_mode == RenderMode::RENDER_FINAL) {
+			std::cout << "[GL] frame=" << _frame_count
+			          << "  before swap: accum_tex=" << _accum_frame->texture
+			          << "  blit_tex=" << _blit_quad->texture << "\n";
+		}
+#endif
+
+		std::swap(_accum_frame, _blit_quad);
+
+#ifdef DEBUG_ACCUMULATION
+		if (_render_mode == RenderMode::RENDER_FINAL) {
+			std::cout << "[GL]           after  swap: accum_tex=" << _accum_frame->texture
+			          << "  blit_tex=" << _blit_quad->texture
+			          << "  blend_weight=" << (1.0f / float(_frame_count)) << "\n";
+		}
+#endif
 
 		// Composite the accumulated frames with the current one
 		// PREVIEW: motion blend (no accumulation)
 		// RENDER_FINAL: proper accumulation via frameCount
 		bool shader_camera_moving = (_render_mode == RenderMode::PREVIEW);
 		glBindFramebuffer(GL_FRAMEBUFFER, _accum_frame->framebuffer);
+
+#ifdef DEBUG_ACCUMULATION
+		if (_render_mode == RenderMode::RENDER_FINAL) {
+			GLenum fbo_status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+			if (fbo_status != GL_FRAMEBUFFER_COMPLETE)
+				std::cout << "[GL] accum_frame FBO incomplete! status=0x"
+				          << std::hex << fbo_status << std::dec << "\n";
+		}
+#endif
+
 		glBindVertexArray(_current_frame->VAO);
 		glActiveTexture(GL_TEXTURE0 + 0);
 		glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
@@ -202,13 +294,70 @@ void Window::tick_render() {
 		glUniform1i(glGetUniformLocation(_accum_shader->ID, "cameraMoving"), shader_camera_moving ? 1 : 0);
 		glDrawArrays(GL_TRIANGLES, 0, 6);
 
+#ifdef DEBUG_ACCUMULATION
+		// ----------------------------------------------------------
+		// Read back the accumulated center pixel after blending.
+		// _accum_frame is GL_RGBA16F so values can exceed 1.0.
+		// ----------------------------------------------------------
+		if (_render_mode == RenderMode::RENDER_FINAL) {
+			float acc_px[4] = {0};
+			if (readback_pixel(_accum_frame->framebuffer, width / 2, height / 2, acc_px)) {
+				std::cout << "[GL] accum_out=(" << acc_px[0] << ", " << acc_px[1]
+				          << ", " << acc_px[2] << ")\n";
+			}
+			GLenum gl_err = glGetError();
+			if (gl_err != GL_NO_ERROR)
+				std::cout << "[GL] glGetError after accum readback: 0x"
+				          << std::hex << gl_err << std::dec << "\n";
+		}
+#endif
+
 		// Check if RENDER_FINAL accumulation is complete
 		if (_render_mode == RenderMode::RENDER_FINAL) {
+#ifndef DISABLE_PROGRESS
 			int progress = (_frame_count * 100) / samples;
 			std::cout << "\rRendering: " << progress << "%" << std::flush;
+#endif
 			if (_frame_count >= samples) {
+#ifndef DISABLE_PROGRESS
 				std::cout << "\rRendering: 100%" << std::endl;
+#endif
 				_render_mode = RenderMode::IDLE;
+
+#ifdef CONVERGENCE_TEST
+				// --------------------------------------------------
+				// Convergence test: compare the shader-accumulated
+				// center pixel against a single full-SPP reference
+				// kernel call.  Both are pre-gamma linear values.
+				// --------------------------------------------------
+				if (!_convergence_test_done) {
+					_convergence_test_done = true;
+
+					// Read accumulated center pixel (GL_RGBA16F)
+					float accum_px[4] = {0};
+					readback_pixel(_accum_frame->framebuffer, width / 2, height / 2, accum_px);
+
+					// Single full-SPP reference render into _current_frame
+					_current_frame->render_kernel(false); // false → spp = samples
+
+					float ref_px[4] = {0};
+					readback_pixel(_current_frame->framebuffer, width / 2, height / 2, ref_px);
+
+					float diff = std::sqrt(
+						std::pow(accum_px[0] - ref_px[0], 2.0f) +
+						std::pow(accum_px[1] - ref_px[1], 2.0f) +
+						std::pow(accum_px[2] - ref_px[2], 2.0f));
+
+					std::cout << "\n[CONVERGENCE TEST]\n";
+					std::cout << "  Accumulated result : ("
+					          << accum_px[0] << ", " << accum_px[1] << ", " << accum_px[2] << ")\n";
+					std::cout << "  Single-call ref    : ("
+					          << ref_px[0] << ", " << ref_px[1] << ", " << ref_px[2] << ")\n";
+					std::cout << "  RGB distance       : " << diff << "\n";
+					std::cout << "  " << (diff < 0.05f ? "PASS (within 0.05 tolerance)"
+					                                   : "FAIL (> 0.05 tolerance)") << "\n\n";
+				}
+#endif // CONVERGENCE_TEST
 			}
 		}
 	}

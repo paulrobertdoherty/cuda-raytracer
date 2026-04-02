@@ -46,6 +46,12 @@ private:
 	bool _enter_was_pressed;
 	std::chrono::steady_clock::time_point _last_frame;
 
+	// Convergence test: set to true after the one-time comparison fires.
+	// Guarded by CONVERGENCE_TEST so it compiles away when disabled.
+#ifdef CONVERGENCE_TEST
+	bool _convergence_test_done = false;
+#endif
+
 
 	void tick_input(float t_diff);
 	void tick_render();
