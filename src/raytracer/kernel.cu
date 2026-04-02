@@ -24,22 +24,6 @@
 
 #include "raytracer/kernel.h"
 
-// ============================================================
-// Debug instrumentation — uncomment to enable CUDA probe logs.
-// Also uncomment DEBUG_ACCUMULATION in Window.cpp to match.
-// ============================================================
-#define DEBUG_ACCUMULATION
-
-#ifdef DEBUG_ACCUMULATION
-struct DebugPixelInfo {
-    float raw_r, raw_g, raw_b;   // color BEFORE division by spp
-    float avg_r, avg_g, avg_b;   // color AFTER division by spp (what gets clamped & written)
-    float first_rand;             // first curand value consumed this frame (changes each frame if PRNG advances)
-    int   spp_received;           // spp value the kernel received
-};
-__device__ DebugPixelInfo d_debug_pixel;
-#endif
-
 __global__ void raytrace(FrameBuffer fb, thrust::device_ptr<World*> world, thrust::device_ptr<Camera*> d_camera, thrust::device_ptr<curandState> rand_state, int samples) {
 
 	// X AND Y coordinates
@@ -53,17 +37,6 @@ __global__ void raytrace(FrameBuffer fb, thrust::device_ptr<World*> world, thrus
 
 	curandState local_rand_state = rand_state[pixel_idx];
 
-#ifdef DEBUG_ACCUMULATION
-	// Save state before consuming any randoms so we can sample it without
-	// perturbing the actual rendering path.
-	float debug_first_rand = 0.0f;
-	bool is_probe_pixel = (i == fb.width / 2 && j == fb.height / 2);
-	if (is_probe_pixel) {
-		curandState probe_state = local_rand_state;
-		debug_first_rand = curand_uniform(&probe_state);
-	}
-#endif
-
 	glm::vec3 col = glm::vec3(0.0f, 0.0f, 0.0f);
 
 	for (int s = 0; s < samples; s++) {
@@ -74,26 +47,10 @@ __global__ void raytrace(FrameBuffer fb, thrust::device_ptr<World*> world, thrus
 		col += fb.color(r, *world, &local_rand_state);
 	}
 	rand_state[pixel_idx] = local_rand_state;
-
-#ifdef DEBUG_ACCUMULATION
-	if (is_probe_pixel) {
-		d_debug_pixel.raw_r      = col.x;   // pre-division (can be > 1 * samples)
-		d_debug_pixel.raw_g      = col.y;
-		d_debug_pixel.raw_b      = col.z;
-		d_debug_pixel.spp_received = samples;
-		d_debug_pixel.first_rand = debug_first_rand;
-	}
-#endif
-
 	col /= float(samples);
-
-#ifdef DEBUG_ACCUMULATION
-	if (is_probe_pixel) {
-		d_debug_pixel.avg_r = col.x;   // post-division (what packUnorm4x8 will clamp)
-		d_debug_pixel.avg_g = col.y;
-		d_debug_pixel.avg_b = col.z;
-	}
-#endif
+	col[0] = sqrtf(col[0]);
+	col[1] = sqrtf(col[1]);
+	col[2] = sqrtf(col[2]);
 
 	fb.writePixel(i, j, glm::vec4(col, 1.0f));
 }
@@ -250,21 +207,6 @@ void KernelInfo::render(bool camera_moving) {
 	check_cuda_errors(cudaDeviceSynchronize());
 
 	check_cuda_errors(cudaGraphicsUnmapResources(1, &resources));
-
-#ifdef DEBUG_ACCUMULATION
-	{
-		DebugPixelInfo h;
-		check_cuda_errors(cudaMemcpyFromSymbol(&h, d_debug_pixel, sizeof(DebugPixelInfo)));
-		bool clamped = (h.avg_r > 1.0f || h.avg_g > 1.0f || h.avg_b > 1.0f ||
-		                h.avg_r < 0.0f || h.avg_g < 0.0f || h.avg_b < 0.0f);
-		std::cout << "[CUDA probe] spp=" << h.spp_received
-		          << "  raw_sum=(" << h.raw_r << ", " << h.raw_g << ", " << h.raw_b << ")"
-		          << "  avg=("     << h.avg_r << ", " << h.avg_g << ", " << h.avg_b << ")"
-		          << (clamped ? "  *** CLAMPED ***" : "")
-		          << "  rand=" << h.first_rand
-		          << "\n";
-	}
-#endif
 }
 
 __global__ void free_scene(thrust::device_ptr<World*> d_world, thrust::device_ptr<Camera*> d_camera) {
