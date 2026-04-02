@@ -13,9 +13,10 @@
 
 #include <memory>
 
-Quad::Quad(unsigned int width, unsigned int height) {
+Quad::Quad(unsigned int width, unsigned int height, GLenum internal_format) {
     this->width = width;
     this->height = height;
+    this->internal_format = internal_format;
 
     vertices = { // vertex attributes for a quad that fills the entire screen in Normalized Device Coordinates.
         // positions   // texCoords
@@ -66,7 +67,7 @@ Quad::Quad(unsigned int width, unsigned int height) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, internal_format, width, height, 0, GL_RGBA, GL_FLOAT, NULL);
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
@@ -96,6 +97,8 @@ void Quad::render_kernel(bool camera_moving) {
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, this->PBO);
     glBindTexture(GL_TEXTURE_2D, this->texture);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 void Quad::resize(unsigned int width, unsigned int height) {
@@ -107,7 +110,7 @@ void Quad::resize(unsigned int width, unsigned int height) {
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 
     glBindTexture(GL_TEXTURE_2D, texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, internal_format, width, height, 0, GL_RGBA, GL_FLOAT, NULL);
     glBindTexture(GL_TEXTURE_2D, 0);
 
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);

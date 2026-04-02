@@ -22,9 +22,10 @@ public:
 	cudaGraphicsResource_t CGR;
 
 	unsigned int width, height;
+	GLenum internal_format;
 
 	std::vector<float> vertices;
-	Quad(unsigned int width, unsigned int height);
+	Quad(unsigned int width, unsigned int height, GLenum internal_format = GL_RGBA8);
 
 	void cuda_init(int samples, int max_depth, float fov);
 	void cuda_destroy();

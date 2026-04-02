@@ -82,7 +82,7 @@ int Window::init_framebuffer() {
 
 int Window::init_quad() {
 	
-	_blit_quad = std::make_unique<Quad>(Window::width, Window::height);
+	_blit_quad = std::make_unique<Quad>(Window::width, Window::height, GL_RGBA16F);
 	_blit_quad->make_FBO();
 
 	_shader = std::make_unique<Shader>("./shaders/rendertype_screen.vert", "./shaders/rendertype_screen.frag");
@@ -91,7 +91,7 @@ int Window::init_quad() {
 	_current_frame->make_FBO();
 
 	_accum_shader = std::make_unique<Shader>("./shaders/rendertype_accumulate.vert", "./shaders/rendertype_accumulate.frag");
-	_accum_frame = std::make_unique<Quad>(Window::width, Window::height);
+	_accum_frame = std::make_unique<Quad>(Window::width, Window::height, GL_RGBA16F);
 	_accum_frame->make_FBO();
 
 	_accum_shader->use();
@@ -182,12 +182,7 @@ void Window::tick_render() {
 
 	if (_render_mode != RenderMode::IDLE) {
 		// Always render 1 SPP per frame (fast, no freeze)
-		glBindFramebuffer(GL_FRAMEBUFFER, _current_frame->framebuffer);
 		_current_frame->render_kernel(true);
-		_shader->use();
-		glBindVertexArray(_current_frame->VAO);
-		glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
-		glDrawArrays(GL_TRIANGLES, 0, 6);
 
 		// Copy accumulated frames to another texture so that we can sample it
 		copyFrameBufferTexture(Window::width, Window::height, _accum_frame->framebuffer, _accum_frame->texture, _blit_quad->framebuffer, _blit_quad->texture);
@@ -197,6 +192,7 @@ void Window::tick_render() {
 		// RENDER_FINAL: proper accumulation via frameCount
 		bool shader_camera_moving = (_render_mode == RenderMode::PREVIEW);
 		glBindFramebuffer(GL_FRAMEBUFFER, _accum_frame->framebuffer);
+		glBindVertexArray(_current_frame->VAO);
 		glActiveTexture(GL_TEXTURE0 + 0);
 		glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
 		glActiveTexture(GL_TEXTURE0 + 1);
