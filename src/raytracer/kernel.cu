@@ -119,7 +119,7 @@ KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int sam
 
 	this->frame_buffer = new FrameBuffer(nx, ny, max_depth);
 
-	camera_info = CameraInfo(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f), fov, (float) nx, (float) ny);
+	camera_info = CameraInfo(glm::vec3(0.0f, 1.0f, 4.0f), glm::vec3(0.0f, 0.0f, 0.0f), fov, (float) nx, (float) ny);
 
 	//checkCudaErrors(cudaMalloc((void**)&d_camera, sizeof(Camera)));
 	d_camera = thrust::device_new<Camera*>();
@@ -187,7 +187,7 @@ void KernelInfo::set_camera(glm::vec3 position, glm::vec3 forward, glm::vec3 up)
 	// completes before the next raytrace kernel on the same stream
 }
 
-void KernelInfo::render() {
+void KernelInfo::render(bool camera_moving) {
 
 	check_cuda_errors(cudaGraphicsMapResources(1, &resources));
 	check_cuda_errors(cudaGraphicsResourceGetMappedPointer((void**)&(frame_buffer->device_ptr), &(frame_buffer->buffer_size), resources));
@@ -198,8 +198,10 @@ void KernelInfo::render() {
 	dim3 blocks(nx / tx + 1, ny / ty + 1);
 	dim3 threads(tx, ty);
 
+	int spp = camera_moving ? 1 : samples;
+
 	// frame buffer is implicitly copied to the device each frame
-	raytrace<<<blocks, threads>>> (*frame_buffer, d_world, d_camera, d_rand_state, samples);
+	raytrace<<<blocks, threads>>> (*frame_buffer, d_world, d_camera, d_rand_state, spp);
 	check_cuda_errors(cudaGetLastError());
 	// wait for the gpu to finish
 	check_cuda_errors(cudaDeviceSynchronize());

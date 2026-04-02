@@ -116,10 +116,7 @@ __device__ glm::vec3 FrameBuffer::color(const Ray& r, World* world, curandState*
 			}
 		}
 		else {
-			glm::vec3 unit_direction = glm::normalize(cur_ray.direction);
-			float t = 0.5f * (unit_direction.y + 1.0f);
-			glm::vec3 c = (1.0f - t) * glm::vec3(1.0, 1.0, 1.0) + t * glm::vec3(0.5, 0.7, 1.0);
-			return accumulated_color + cur_attenuation * c;
+			return accumulated_color;
 		}
 	}
 	return accumulated_color;
