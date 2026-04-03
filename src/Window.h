@@ -10,6 +10,8 @@
 #include "Quad.h"
 #include "Input.h"
 
+enum class RenderMode { PREVIEW, RENDER_FINAL, IDLE };
+
 class Window {
 public:
 	unsigned int width;
@@ -40,6 +42,8 @@ private:
 	Input _input;
 	int _frame_count;
 	bool _camera_moving;
+	RenderMode _render_mode;
+	bool _enter_was_pressed;
 	std::chrono::steady_clock::time_point _last_frame;
 
 

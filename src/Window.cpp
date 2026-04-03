@@ -12,6 +12,8 @@ Window::Window(unsigned int width, unsigned int height, int samples, int max_dep
 	Window::fov = fov;
 	Window::_frame_count = 0;
 	Window::_camera_moving = false;
+	Window::_render_mode = RenderMode::PREVIEW;
+	Window::_enter_was_pressed = false;
 }
 
 int Window::init_glfw() {
@@ -128,11 +130,26 @@ void Window::destroy() {
 
 void Window::tick_input(float t_diff) {
 
-	//input
 	_input.process_quit(_window);
-	_input.process_camera_movement(_window, *(_current_frame->_renderer), t_diff);
-	_camera_moving = _input.has_camera_moved();
-	if (_camera_moving) _frame_count = 1;
+
+	// Detect Enter key press (rising edge)
+	bool enter_down = glfwGetKey(_window, GLFW_KEY_ENTER) == GLFW_PRESS;
+	if (enter_down && !_enter_was_pressed) {
+		if (_render_mode == RenderMode::PREVIEW) {
+			_render_mode = RenderMode::RENDER_FINAL;
+			_frame_count = 1;
+		} else if (_render_mode == RenderMode::IDLE) {
+			_render_mode = RenderMode::PREVIEW;
+		}
+	}
+	_enter_was_pressed = enter_down;
+
+	// Only process camera movement in preview mode
+	if (_render_mode == RenderMode::PREVIEW) {
+		_input.process_camera_movement(_window, *(_current_frame->_renderer), t_diff);
+		_camera_moving = _input.has_camera_moved();
+		if (_camera_moving) _frame_count = 1;
+	}
 }
 
 void copyFrameBufferTexture(int width, int height, int fboIn, int textureIn, int fboOut, int textureOut) {
@@ -163,35 +180,51 @@ void Window::tick_render() {
 	glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 
-	// Render current frame
-	glBindFramebuffer(GL_FRAMEBUFFER, _current_frame->framebuffer);
-	_current_frame->render_kernel();
-	_shader->use();
-	glBindVertexArray(_current_frame->VAO);
-	glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
-	glDrawArrays(GL_TRIANGLES, 0, 6); // draw current frame to texture
+	if (_render_mode == RenderMode::RENDER_FINAL) {
+		// Single large kernel launch with all samples — GPU will freeze until done
+		glBindFramebuffer(GL_FRAMEBUFFER, _current_frame->framebuffer);
+		_current_frame->render_kernel(false);
+		_shader->use();
+		glBindVertexArray(_current_frame->VAO);
+		glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
 
-	// Copy accumulated frames to another texture so that we can sample it
-	copyFrameBufferTexture(Window::width, Window::height, _accum_frame->framebuffer, _accum_frame->texture, _blit_quad->framebuffer, _blit_quad->texture);
+		// Copy result directly to accum frame for display
+		copyFrameBufferTexture(Window::width, Window::height, _current_frame->framebuffer, _current_frame->texture, _accum_frame->framebuffer, _accum_frame->texture);
 
-	// Composite the accumulated frames with the current one
-	glBindFramebuffer(GL_FRAMEBUFFER, _accum_frame->framebuffer);
-	glActiveTexture(GL_TEXTURE0 + 0);
-	glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
-	glActiveTexture(GL_TEXTURE0 + 1);
-	glBindTexture(GL_TEXTURE_2D, _blit_quad->texture);
-	_accum_shader->use();
-	glUniform1i(glGetUniformLocation(_accum_shader->ID, "frameCount"), _frame_count);
-	glUniform1i(glGetUniformLocation(_accum_shader->ID, "cameraMoving"), _camera_moving ? 1 : 0);
-	glDrawArrays(GL_TRIANGLES, 0, 6);
+		_render_mode = RenderMode::IDLE;
+	} else if (_render_mode == RenderMode::PREVIEW) {
+		// 1 SPP per frame for responsive preview
+		glBindFramebuffer(GL_FRAMEBUFFER, _current_frame->framebuffer);
+		_current_frame->render_kernel(true);
+		_shader->use();
+		glBindVertexArray(_current_frame->VAO);
+		glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
 
-	// Render result to screen
+		// Copy accumulated frames to another texture so that we can sample it
+		copyFrameBufferTexture(Window::width, Window::height, _accum_frame->framebuffer, _accum_frame->texture, _blit_quad->framebuffer, _blit_quad->texture);
+
+		// Composite the accumulated frames with the current one (motion blur)
+		glBindFramebuffer(GL_FRAMEBUFFER, _accum_frame->framebuffer);
+		glActiveTexture(GL_TEXTURE0 + 0);
+		glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
+		glActiveTexture(GL_TEXTURE0 + 1);
+		glBindTexture(GL_TEXTURE_2D, _blit_quad->texture);
+		_accum_shader->use();
+		glUniform1i(glGetUniformLocation(_accum_shader->ID, "frameCount"), _frame_count);
+		glUniform1i(glGetUniformLocation(_accum_shader->ID, "cameraMoving"), _camera_moving ? 1 : 0);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+	}
+	// IDLE: no GPU work, just redisplay the last frame in _accum_frame
+
+	// Render result to screen (always — in IDLE this redisplays the last frame)
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	_shader->use();
 	glActiveTexture(GL_TEXTURE0 + 0);
 	glBindTexture(GL_TEXTURE_2D, _accum_frame->texture);
+	glBindVertexArray(_current_frame->VAO);
 	glDrawArrays(GL_TRIANGLES, 0, 6);
-
 
 	// Check and call events and swap buffers between frames
 	glfwSwapBuffers(_window);
@@ -213,6 +246,6 @@ void Window::tick() {
 	 // Render
 	tick_render();
 
-	// Accumulate the amount of frames rendered
-	_frame_count++;
+	if (_render_mode != RenderMode::IDLE)
+		_frame_count++;
 }

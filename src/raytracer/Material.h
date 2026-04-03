@@ -59,13 +59,13 @@ public:
 	__device__ Lambertian(const glm::vec3& a): albedo(new SolidColor(a)) {}
 	__device__ Lambertian(Texture* a) : albedo(a) {}
 	__device__ virtual bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, curandState* local_rand_state) const {
-		glm::vec3 scatter_direction = random_in_hemisphere(local_rand_state, rec.normal);
+		glm::vec3 scatter_direction = rec.normal + random_in_unit_sphere(local_rand_state);
 
 		if (near_zero(scatter_direction)) {
 			scatter_direction = rec.normal;
 		}
 
-		scattered = Ray(rec.p, scatter_direction);
+		scattered = Ray(rec.p, glm::normalize(scatter_direction));
 		attenuation = albedo->value(rec.u, rec.v, rec.p);
 		return true;
 	}
