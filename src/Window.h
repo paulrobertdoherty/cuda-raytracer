@@ -46,6 +46,7 @@ private:
 	bool _enter_was_pressed;
 	std::chrono::steady_clock::time_point _last_frame;
 
+
 	void tick_input(float t_diff);
 	void tick_render();
 	void tick();

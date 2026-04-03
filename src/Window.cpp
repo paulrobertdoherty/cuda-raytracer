@@ -82,7 +82,7 @@ int Window::init_framebuffer() {
 
 int Window::init_quad() {
 	
-	_blit_quad = std::make_unique<Quad>(Window::width, Window::height, GL_RGBA16F);
+	_blit_quad = std::make_unique<Quad>(Window::width, Window::height);
 	_blit_quad->make_FBO();
 
 	_shader = std::make_unique<Shader>("./shaders/rendertype_screen.vert", "./shaders/rendertype_screen.frag");
@@ -91,7 +91,7 @@ int Window::init_quad() {
 	_current_frame->make_FBO();
 
 	_accum_shader = std::make_unique<Shader>("./shaders/rendertype_accumulate.vert", "./shaders/rendertype_accumulate.frag");
-	_accum_frame = std::make_unique<Quad>(Window::width, Window::height, GL_RGBA16F);
+	_accum_frame = std::make_unique<Quad>(Window::width, Window::height);
 	_accum_frame->make_FBO();
 
 	_accum_shader->use();
@@ -180,38 +180,43 @@ void Window::tick_render() {
 	glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 
-	if (_render_mode != RenderMode::IDLE) {
-		// Render current frame via CUDA kernel
-		_current_frame->render_kernel(_camera_moving);
+	if (_render_mode == RenderMode::RENDER_FINAL) {
+		// Single large kernel launch with all samples — GPU will freeze until done
+		glBindFramebuffer(GL_FRAMEBUFFER, _current_frame->framebuffer);
+		_current_frame->render_kernel(false);
+		_shader->use();
+		glBindVertexArray(_current_frame->VAO);
+		glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+
+		// Copy result directly to accum frame for display
+		copyFrameBufferTexture(Window::width, Window::height, _current_frame->framebuffer, _current_frame->texture, _accum_frame->framebuffer, _accum_frame->texture);
+
+		_render_mode = RenderMode::IDLE;
+	} else if (_render_mode == RenderMode::PREVIEW) {
+		// 1 SPP per frame for responsive preview
+		glBindFramebuffer(GL_FRAMEBUFFER, _current_frame->framebuffer);
+		_current_frame->render_kernel(true);
+		_shader->use();
+		glBindVertexArray(_current_frame->VAO);
+		glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
 
 		// Copy accumulated frames to another texture so that we can sample it
 		copyFrameBufferTexture(Window::width, Window::height, _accum_frame->framebuffer, _accum_frame->texture, _blit_quad->framebuffer, _blit_quad->texture);
 
-		// Composite the accumulated frames with the current one
-		// PREVIEW: motion blend (no accumulation)
-		// RENDER_FINAL: proper accumulation via frameCount
-		bool shader_camera_moving = (_render_mode == RenderMode::PREVIEW);
+		// Composite the accumulated frames with the current one (motion blur)
 		glBindFramebuffer(GL_FRAMEBUFFER, _accum_frame->framebuffer);
-		glBindVertexArray(_current_frame->VAO);
 		glActiveTexture(GL_TEXTURE0 + 0);
 		glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
 		glActiveTexture(GL_TEXTURE0 + 1);
 		glBindTexture(GL_TEXTURE_2D, _blit_quad->texture);
 		_accum_shader->use();
 		glUniform1i(glGetUniformLocation(_accum_shader->ID, "frameCount"), _frame_count);
-		glUniform1i(glGetUniformLocation(_accum_shader->ID, "cameraMoving"), shader_camera_moving ? 1 : 0);
+		glUniform1i(glGetUniformLocation(_accum_shader->ID, "cameraMoving"), _camera_moving ? 1 : 0);
 		glDrawArrays(GL_TRIANGLES, 0, 6);
-
-		// Check if RENDER_FINAL accumulation is complete
-		if (_render_mode == RenderMode::RENDER_FINAL) {
-			int progress = (_frame_count * 100) / samples;
-			std::cout << "\rRendering: " << progress << "%" << std::flush;
-			if (_frame_count >= samples) {
-				std::cout << "\rRendering: 100%" << std::endl;
-				_render_mode = RenderMode::IDLE;
-			}
-		}
 	}
+	// IDLE: no GPU work, just redisplay the last frame in _accum_frame
 
 	// Render result to screen (always — in IDLE this redisplays the last frame)
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -221,6 +226,7 @@ void Window::tick_render() {
 	glBindVertexArray(_current_frame->VAO);
 	glDrawArrays(GL_TRIANGLES, 0, 6);
 
+	// Check and call events and swap buffers between frames
 	glfwSwapBuffers(_window);
 	glfwPollEvents();
 }
