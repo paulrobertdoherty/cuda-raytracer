@@ -12,3 +12,8 @@ _deps
 
 out
 .vs
+
+# Linux build artifacts
+build/
+*.o
+cuda-raytracer

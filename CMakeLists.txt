@@ -66,15 +66,15 @@ message(STATUS "Found GLFW3 in ${GLFW3_INCLUDE_DIR}")
 add_library(GLAD "thirdparty/glad.c")
 
 # CUDA
-find_package(CUDA REQUIRED)
-include_directories("${CUDA_INCLUDE_DIRS}")
+find_package(CUDAToolkit REQUIRED)
+include_directories("${CUDAToolkit_INCLUDE_DIRS}")
 # CUDA 12+ moved Thrust/CUB/libcudacxx into a CCCL subdirectory
-if(EXISTS "${CUDA_TOOLKIT_ROOT_DIR}/include/cccl")
-	include_directories("${CUDA_TOOLKIT_ROOT_DIR}/include/cccl")
+if(EXISTS "${CUDAToolkit_INCLUDE_DIRS}/cccl")
+	include_directories("${CUDAToolkit_INCLUDE_DIRS}/cccl")
 endif()
 
 # Put all libraries into a variable
-set(LIBS ${GLFW3_LIBRARY} ${OPENGL_LIBRARY} GLAD ${CMAKE_DL_LIBS} ${CUDA_LIBRARIES})
+set(LIBS ${GLFW3_LIBRARY} ${OPENGL_LIBRARY} GLAD ${CMAKE_DL_LIBS} CUDA::cudart CUDA::curand)
 
 # Define the include DIRs
 include_directories(
@@ -85,7 +85,9 @@ include_directories(
 )
 
 # Prevent Windows min/max/small macros from conflicting with C++ standard library
-target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+if(WIN32)
+	target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
 
 # Define the link libraries
 target_link_libraries(${PROJECT_NAME} ${LIBS})

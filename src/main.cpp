@@ -5,6 +5,18 @@
 #include <string>
 #include <cstdlib>
 
+#if defined(__linux__)
+// On hybrid-GPU laptops, force GLX/EGL to use the NVIDIA dGPU so that the
+// OpenGL context lives on the same device as CUDA. Without this, GLFW picks
+// the integrated GPU via Mesa and cudaGraphicsGLRegisterBuffer fails with
+// cudaErrorInvalidGraphicsContext (219). Must be set before glfwInit().
+__attribute__((constructor))
+static void force_nvidia_prime_offload() {
+	setenv("__NV_PRIME_RENDER_OFFLOAD", "1", 0);
+	setenv("__GLX_VENDOR_LIBRARY_NAME", "nvidia", 0);
+}
+#endif
+
 void print_usage(const char* program_name) {
 	std::cout << "Usage: " << program_name << " [options]\n"
 		<< "Options:\n"

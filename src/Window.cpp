@@ -16,9 +16,26 @@ Window::Window(unsigned int width, unsigned int height, int samples, int max_dep
 	Window::_enter_was_pressed = false;
 }
 
+static void glfw_error_callback(int code, const char* description) {
+	std::cerr << "[GLFW error " << code << "] " << description << std::endl;
+}
+
 int Window::init_glfw() {
+	glfwSetErrorCallback(glfw_error_callback);
+#if defined(__linux__)
+	// On Wayland sessions, GLFW's Wayland/EGL backend binds to the Mesa EGL
+	// implementation on the integrated GPU and ignores __NV_PRIME_RENDER_OFFLOAD,
+	// so cudaGraphicsGLRegisterBuffer fails (or no window appears at all).
+	// Force the X11 backend so we go through XWayland + GLX, which honors PRIME
+	// offload and lets the GL context live on the NVIDIA dGPU alongside CUDA.
+	glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
+#endif
+
 	// Initialize and configure GLFW
-	glfwInit();
+	if (!glfwInit()) {
+		std::cout << "Failed to initialize GLFW" << std::endl;
+		return -1;
+	}
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
