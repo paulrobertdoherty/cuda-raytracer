@@ -9,6 +9,7 @@
 #include "Shader.h"
 #include "Quad.h"
 #include "Input.h"
+#include "raytracer/kernel.h"
 
 enum class RenderMode { PREVIEW, RENDER_FINAL, IDLE };
 
@@ -19,8 +20,9 @@ public:
 	int samples;
 	int max_depth;
 	float fov;
+	int tile_size;
 
-	Window(unsigned int width, unsigned int height, int samples, int max_depth, float fov);
+	Window(unsigned int width, unsigned int height, int samples, int max_depth, float fov, int tile_size = DEFAULT_TILE_SIZE);
 
 	int init();
 	void destroy();

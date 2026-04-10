@@ -29,6 +29,7 @@ public:
 	void cuda_init(int samples, int max_depth, float fov);
 	void cuda_destroy();
 	void render_kernel(bool camera_moving);
+	void upload_tile(int x, int y, int w, int h);
 	void resize(unsigned int width, unsigned int height);
 	void make_FBO();
 };

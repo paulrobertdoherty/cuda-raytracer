@@ -58,7 +58,7 @@ public:
 		return true;
 	}
 
-	__device__ bool sample_point(curandState* rng, glm::vec3& point, glm::vec3& normal_out) const override {
+	__device__ bool sample_point(RandState* rng, glm::vec3& point, glm::vec3& normal_out) const override {
 		float z = 1.0f - 2.0f * curand_uniform(rng);
 		float r_xy = sqrtf(fmaxf(0.0f, 1.0f - z * z));
 		float phi = 2.0f * M_PI * curand_uniform(rng);

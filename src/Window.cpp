@@ -4,12 +4,13 @@
 #include <iomanip>
 #include <memory>
 
-Window::Window(unsigned int width, unsigned int height, int samples, int max_depth, float fov) {
+Window::Window(unsigned int width, unsigned int height, int samples, int max_depth, float fov, int tile_size) {
 	Window::width = width;
 	Window::height = height;
 	Window::samples = samples;
 	Window::max_depth = max_depth;
 	Window::fov = fov;
+	Window::tile_size = tile_size;
 	Window::_frame_count = 0;
 	Window::_camera_moving = false;
 	Window::_render_mode = RenderMode::PREVIEW;
@@ -198,15 +199,58 @@ void Window::tick_render() {
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	if (_render_mode == RenderMode::RENDER_FINAL) {
-		// Single large kernel launch with all samples — GPU will freeze until done
+		// Tiled progressive rendering: render one tile at a time, displaying
+		// each tile as it completes so the image "paints in" progressively.
+		bool aborted = false;
+		int tiles_x = (width + tile_size - 1) / tile_size;
+		int tiles_y = (height + tile_size - 1) / tile_size;
+
+		for (int ty = 0; ty < tiles_y && !aborted; ty++) {
+			for (int tx = 0; tx < tiles_x && !aborted; tx++) {
+				int tile_ox = tx * tile_size;
+				int tile_oy = ty * tile_size;
+				int tile_w = (tile_ox + tile_size > (int)width) ? (int)width - tile_ox : tile_size;
+				int tile_h = (tile_oy + tile_size > (int)height) ? (int)height - tile_oy : tile_size;
+
+				// Map PBO so CUDA can write to it
+				_current_frame->_renderer->map_pbo();
+
+				// Launch kernel for just this tile
+				_current_frame->_renderer->render_tile(tile_ox, tile_oy, tile_w, tile_h, samples);
+
+				// Unmap PBO so OpenGL can read from it
+				_current_frame->_renderer->unmap_pbo();
+
+				// Upload this tile's pixels from PBO to texture
+				_current_frame->upload_tile(tile_ox, tile_oy, tile_w, tile_h);
+
+				// Draw the full-screen quad to show the partially-updated image
+				glBindFramebuffer(GL_FRAMEBUFFER, 0);
+				glDisable(GL_DEPTH_TEST);
+				_shader->use();
+				glActiveTexture(GL_TEXTURE0);
+				glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
+				glBindVertexArray(_current_frame->VAO);
+				glDrawArrays(GL_TRIANGLES, 0, 6);
+
+				glfwSwapBuffers(_window);
+				glfwPollEvents();
+
+				// Check for abort
+				if (glfwGetKey(_window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+					aborted = true;
+				}
+			}
+		}
+
+		// Copy final (or partial) result to accum frame for display
+		// First upload the full texture from PBO (already done tile by tile above)
 		glBindFramebuffer(GL_FRAMEBUFFER, _current_frame->framebuffer);
-		_current_frame->render_kernel(false);
 		_shader->use();
 		glBindVertexArray(_current_frame->VAO);
 		glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
 		glDrawArrays(GL_TRIANGLES, 0, 6);
 
-		// Copy result directly to accum frame for display
 		copyFrameBufferTexture(Window::width, Window::height, _current_frame->framebuffer, _current_frame->texture, _accum_frame->framebuffer, _accum_frame->texture);
 
 		_render_mode = RenderMode::IDLE;

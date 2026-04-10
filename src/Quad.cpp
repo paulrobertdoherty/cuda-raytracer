@@ -98,6 +98,25 @@ void Quad::render_kernel(bool camera_moving) {
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
 }
 
+void Quad::upload_tile(int x, int y, int w, int h) {
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, this->PBO);
+    glBindTexture(GL_TEXTURE_2D, this->texture);
+
+    // The PBO contains the full framebuffer row-by-row. We need to tell OpenGL
+    // the row length so it can skip to the correct offset for sub-image upload.
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, this->width);
+
+    // Compute the byte offset into the PBO for this tile's top-left pixel.
+    // Each pixel is 4 bytes (BGRA/RGBA8).
+    size_t offset = ((size_t)y * this->width + x) * 4;
+
+    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, w, h, GL_BGRA, GL_UNSIGNED_BYTE, (void*)offset);
+
+    // Reset to default
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+}
+
 void Quad::resize(unsigned int width, unsigned int height) {
     this->width = width;
     this->height = height;

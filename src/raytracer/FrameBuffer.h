@@ -26,7 +26,7 @@ public:
 
 	__device__ void writePixel(int x, int y, glm::vec4 pixel);
 
-	__device__ glm::vec3 color(const Ray& r, World* world, curandState* local_rand_state);
+	__device__ glm::vec3 color(const Ray& r, World* world, RandState* local_rand_state);
 };
 
 #ifdef __CUDACC__
@@ -45,13 +45,27 @@ __device__ void FrameBuffer::writePixel(int x, int y, glm::vec4 pixel) {
 	device_ptr[idx] = glm::packUnorm4x8(glm::vec4(pixel.b, pixel.g, pixel.r, pixel.a));
 }
 
-__device__ glm::vec3 FrameBuffer::color(const Ray& r, World* world, curandState* local_rand_state) {
+__device__ glm::vec3 FrameBuffer::color(const Ray& r, World* world, RandState* local_rand_state) {
 	Ray cur_ray = r;
 	glm::vec3 cur_attenuation = glm::vec3(1.0, 1.0, 1.0);
 	glm::vec3 accumulated_color = glm::vec3(0.0f);
 	bool count_emission = true;
 
+	constexpr int RR_MIN_BOUNCES = 3;
+	constexpr float RR_MAX_SURVIVAL = 0.95f;
+
 	for (int i = 0; i < max_depth; i++) {
+		// Russian Roulette path termination after minimum bounces
+		if (i >= RR_MIN_BOUNCES) {
+			float max_component = fmaxf(cur_attenuation.x, fmaxf(cur_attenuation.y, cur_attenuation.z));
+			float survival_prob = fminf(max_component, RR_MAX_SURVIVAL);
+			if (curand_uniform(local_rand_state) > survival_prob) {
+				return accumulated_color;
+			}
+			// Compensate for terminated paths to keep estimate unbiased
+			cur_attenuation /= survival_prob;
+		}
+
 		HitRecord rec;
 		if (world->hit(cur_ray, 0.001f, FLT_MAX, rec)) {
 			// Only count emission if not already handled by NEE on previous bounce
