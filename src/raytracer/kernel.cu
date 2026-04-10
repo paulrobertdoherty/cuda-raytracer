@@ -24,18 +24,18 @@
 
 #include "raytracer/kernel.h"
 
-__global__ void raytrace(FrameBuffer fb, thrust::device_ptr<World*> world, thrust::device_ptr<Camera*> d_camera, thrust::device_ptr<curandState> rand_state, int samples) {
+__global__ void raytrace(FrameBuffer fb, thrust::device_ptr<World*> world, thrust::device_ptr<Camera*> d_camera, thrust::device_ptr<RandState> rand_state, int samples, int tile_offset_x, int tile_offset_y) {
 
-	// X AND Y coordinates
-	int i = threadIdx.x + blockIdx.x * blockDim.x;
-	int j = threadIdx.y + blockIdx.y * blockDim.y;
+	// X AND Y coordinates with tile offset
+	int i = threadIdx.x + blockIdx.x * blockDim.x + tile_offset_x;
+	int j = threadIdx.y + blockIdx.y * blockDim.y + tile_offset_y;
 
 	// return early if we're outside of the frame buffer
 	if ((i >= fb.width) || (j >= fb.height)) return;
 
 	int pixel_idx = j * fb.width + i;
 
-	curandState local_rand_state = rand_state[pixel_idx];
+	RandState local_rand_state = rand_state[pixel_idx];
 
 	glm::vec3 col = glm::vec3(0.0f, 0.0f, 0.0f);
 
@@ -100,7 +100,7 @@ __global__ void create_world(thrust::device_ptr<World*> d_world, thrust::device_
 	}
 }
 
-__global__ void render_init(int width, int height, thrust::device_ptr<curandState> rand_state) {
+__global__ void render_init(int width, int height, thrust::device_ptr<RandState> rand_state) {
 	int i = threadIdx.x + blockIdx.x * blockDim.x;
 	int j = threadIdx.y + blockIdx.y * blockDim.y;
 	if ((i >= width) || (j >= height)) return;
@@ -123,7 +123,7 @@ KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int sam
 
 	//checkCudaErrors(cudaMalloc((void**)&d_camera, sizeof(Camera)));
 	d_camera = thrust::device_new<Camera*>();
-	d_rand_state = thrust::device_new<curandState>(nx * ny);
+	d_rand_state = thrust::device_new<RandState>(nx * ny);
 
 	d_world = thrust::device_new<World*>();
 
@@ -163,7 +163,7 @@ void KernelInfo::resize(int nx, int ny) {
 	int ty = 8;
 
 	thrust::device_free(d_rand_state);
-	d_rand_state = thrust::device_new<curandState>(nx * ny);
+	d_rand_state = thrust::device_new<RandState>(nx * ny);
 
 
 	dim3 blocks(nx / tx + 1, ny / ty + 1);
@@ -201,12 +201,33 @@ void KernelInfo::render(bool camera_moving) {
 	int spp = camera_moving ? 1 : samples;
 
 	// frame buffer is implicitly copied to the device each frame
-	raytrace<<<blocks, threads>>> (*frame_buffer, d_world, d_camera, d_rand_state, spp);
+	raytrace<<<blocks, threads>>> (*frame_buffer, d_world, d_camera, d_rand_state, spp, 0, 0);
 	check_cuda_errors(cudaGetLastError());
 	// wait for the gpu to finish
 	check_cuda_errors(cudaDeviceSynchronize());
 
 	check_cuda_errors(cudaGraphicsUnmapResources(1, &resources));
+}
+
+void KernelInfo::map_pbo() {
+	check_cuda_errors(cudaGraphicsMapResources(1, &resources));
+	check_cuda_errors(cudaGraphicsResourceGetMappedPointer((void**)&(frame_buffer->device_ptr), &(frame_buffer->buffer_size), resources));
+}
+
+void KernelInfo::unmap_pbo() {
+	check_cuda_errors(cudaGraphicsUnmapResources(1, &resources));
+}
+
+void KernelInfo::render_tile(int tile_offset_x, int tile_offset_y, int tile_w, int tile_h, int spp) {
+	int tx = 16;
+	int ty = 16;
+
+	dim3 blocks((tile_w + tx - 1) / tx, (tile_h + ty - 1) / ty);
+	dim3 threads(tx, ty);
+
+	raytrace<<<blocks, threads>>> (*frame_buffer, d_world, d_camera, d_rand_state, spp, tile_offset_x, tile_offset_y);
+	check_cuda_errors(cudaGetLastError());
+	check_cuda_errors(cudaDeviceSynchronize());
 }
 
 __global__ void free_scene(thrust::device_ptr<World*> d_world, thrust::device_ptr<Camera*> d_camera) {

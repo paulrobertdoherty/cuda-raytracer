@@ -4,6 +4,10 @@
 #include <glm/glm.hpp>
 #include <curand_kernel.h>
 
+// Use Philox counter-based RNG for per-pixel state: smaller working set and
+// better throughput than the default XORWOW generator on modern GPUs.
+using RandState = curandStatePhilox4_32_10_t;
+
 #include "AABB.h"
 
 class Material;
@@ -27,7 +31,7 @@ public:
 	__device__ virtual ~Hittable() {}
 	__device__ virtual bool hit(const Ray& r, float t_min, float t_max, HitRecord& rec) const = 0;
 	__device__ virtual bool bounding_box(float time0, float time1, AABB& output_box) const = 0;
-	__device__ virtual bool sample_point(curandState* rng, glm::vec3& point, glm::vec3& normal_out) const {
+	__device__ virtual bool sample_point(RandState* rng, glm::vec3& point, glm::vec3& normal_out) const {
 		return false;
 	}
 	__device__ virtual float area() const { return 0.0f; }

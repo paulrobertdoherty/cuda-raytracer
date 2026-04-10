@@ -11,7 +11,7 @@ struct HitRecord;
 
 #define RANDVEC3 glm::vec3(curand_uniform(local_rand_state),curand_uniform(local_rand_state),curand_uniform(local_rand_state))
 
-__device__ glm::vec3 random_in_unit_sphere(curandState* local_rand_state) {
+__device__ glm::vec3 random_in_unit_sphere(RandState* local_rand_state) {
 	glm::vec3 p;
 	do {
 		p = 2.0f * RANDVEC3 - glm::vec3(1, 1, 1);
@@ -19,13 +19,36 @@ __device__ glm::vec3 random_in_unit_sphere(curandState* local_rand_state) {
 	return p;
 }
 
-__device__ glm::vec3 random_in_hemisphere(curandState* local_rand_state, const glm::vec3 normal) {
+__device__ glm::vec3 random_in_hemisphere(RandState* local_rand_state, const glm::vec3 normal) {
 	glm::vec3 in_unit_sphere = random_in_unit_sphere(local_rand_state);
 
 	if (glm::dot(in_unit_sphere, normal) > 0.0) {
 		return in_unit_sphere;
 	}
 	return -in_unit_sphere;
+}
+
+// Build an orthonormal basis (tangent, bitangent, normal) from a surface normal
+__device__ void build_onb(const glm::vec3& n, glm::vec3& t, glm::vec3& b) {
+	glm::vec3 a = (fabsf(n.x) > 0.9f) ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
+	b = glm::normalize(glm::cross(n, a));
+	t = glm::cross(b, n);
+}
+
+// Cosine-weighted hemisphere sampling: PDF proportional to cos(theta)/pi
+__device__ glm::vec3 cosine_weighted_hemisphere(RandState* local_rand_state, const glm::vec3& normal) {
+	float r1 = curand_uniform(local_rand_state);
+	float r2 = curand_uniform(local_rand_state);
+
+	float phi = 2.0f * 3.14159265358979323846f * r1;
+	float x = cosf(phi) * sqrtf(r2);
+	float y = sinf(phi) * sqrtf(r2);
+	float z = sqrtf(1.0f - r2);
+
+	// Transform from local frame (normal = Z) to world space
+	glm::vec3 t, b;
+	build_onb(normal, t, b);
+	return t * x + b * y + normal * z;
 }
 
 __device__ glm::vec3 reflect(const glm::vec3& v, const glm::vec3& n) {
@@ -46,7 +69,7 @@ __device__ glm::vec3 refract(const glm::vec3& uv, const glm::vec3& n, float etai
 
 class Material {
 public:
-	__device__ virtual bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, curandState* local_rand_state) const = 0;
+	__device__ virtual bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, RandState* local_rand_state) const = 0;
 	__device__ virtual glm::vec3 emitted(float u, float v, const glm::vec3& p) const {
 		return glm::vec3(0.0f);
 	}
@@ -58,8 +81,8 @@ class Lambertian : public Material {
 public:
 	__device__ Lambertian(const glm::vec3& a): albedo(new SolidColor(a)) {}
 	__device__ Lambertian(Texture* a) : albedo(a) {}
-	__device__ virtual bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, curandState* local_rand_state) const {
-		glm::vec3 scatter_direction = rec.normal + random_in_unit_sphere(local_rand_state);
+	__device__ virtual bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, RandState* local_rand_state) const {
+		glm::vec3 scatter_direction = cosine_weighted_hemisphere(local_rand_state, rec.normal);
 
 		if (near_zero(scatter_direction)) {
 			scatter_direction = rec.normal;
@@ -81,7 +104,7 @@ class Metal : public Material {
 public:
 	__device__ Metal(const glm::vec3& a, float f) : albedo(a) { if (f < 1) fuzz = f; else fuzz = 1; }
 	__device__ bool is_specular() const override { return true; }
-	__device__ virtual bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, curandState* local_rand_state) const {
+	__device__ virtual bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, RandState* local_rand_state) const {
 		glm::vec3 reflected = reflect(glm::normalize(r_in.direction), rec.normal);
 		scattered = Ray(rec.p, reflected + fuzz * random_in_unit_sphere(local_rand_state));
 		attenuation = albedo;
@@ -96,7 +119,7 @@ public:
 	__device__ Dielectric(float index_of_refraction): ir(index_of_refraction) {}
 	__device__ bool is_specular() const override { return true; }
 
-	__device__ virtual bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, curandState* local_rand_state) const {
+	__device__ virtual bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, RandState* local_rand_state) const {
 		attenuation = glm::vec3(1.0f, 1.0f, 1.0f);
 		float refraction_ratio = rec.front_face ? (1.0f / ir) : ir;
 		glm::vec3 unit_direction = glm::normalize(r_in.direction);
@@ -132,7 +155,7 @@ class Emissive : public Material {
 public:
 	__device__ Emissive(Texture* a, float i = 1.0f) : emit(a), intensity(i) {}
 	__device__ Emissive(glm::vec3 c, float i = 1.0f) : emit(new SolidColor(c)), intensity(i) {}
-	__device__ bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, curandState* local_rand_state) const override {
+	__device__ bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, RandState* local_rand_state) const override {
 		return false;
 	}
 	__device__ glm::vec3 emitted(float u, float v, const glm::vec3& p) const override {
