@@ -9,6 +9,7 @@
 #include "Shader.h"
 #include "Quad.h"
 #include "Input.h"
+#include "Rasterizer.h"
 #include "raytracer/kernel.h"
 
 enum class RenderMode { PREVIEW, RENDER_FINAL, IDLE };
@@ -21,8 +22,9 @@ public:
 	int max_depth;
 	float fov;
 	int tile_size;
+	int preview_scale;
 
-	Window(unsigned int width, unsigned int height, int samples, int max_depth, float fov, int tile_size = DEFAULT_TILE_SIZE);
+	Window(unsigned int width, unsigned int height, int samples, int max_depth, float fov, int tile_size = DEFAULT_TILE_SIZE, int preview_scale = 1);
 
 	int init();
 	void destroy();
@@ -35,6 +37,9 @@ private:
 	std::unique_ptr<Quad> _blit_quad;
 	std::unique_ptr<Quad> _accum_frame;
 	std::unique_ptr<Quad> _current_frame;
+	std::unique_ptr<Quad> _raster_frame;
+	GLuint _raster_depth_rb;
+	std::unique_ptr<Rasterizer> _rasterizer;
 
 	int init_glad();
 	int init_glfw();
@@ -46,6 +51,8 @@ private:
 	bool _camera_moving;
 	RenderMode _render_mode;
 	bool _enter_was_pressed;
+	bool _r_was_pressed;
+	bool _rasterization_enabled;
 	std::chrono::steady_clock::time_point _last_frame;
 
 

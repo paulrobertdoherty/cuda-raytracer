@@ -55,6 +55,42 @@ __global__ void raytrace(FrameBuffer fb, thrust::device_ptr<World*> world, thrus
 	fb.writePixel(i, j, glm::vec4(col, 1.0f));
 }
 
+__global__ void raytrace_pixelated(FrameBuffer fb, thrust::device_ptr<World*> world, thrust::device_ptr<Camera*> d_camera, thrust::device_ptr<RandState> rand_state, int pixelate) {
+
+	int ci = threadIdx.x + blockIdx.x * blockDim.x;
+	int cj = threadIdx.y + blockIdx.y * blockDim.y;
+
+	int x0 = ci * pixelate;
+	int y0 = cj * pixelate;
+
+	if (x0 >= fb.width || y0 >= fb.height) return;
+
+	// Reuse the rand state slot at the block's top-left pixel.
+	int rand_idx = y0 * fb.width + x0;
+	RandState local_rand_state = rand_state[rand_idx];
+
+	float u = (float(x0) + 0.5f * float(pixelate)) / float(fb.width);
+	float v = (float(y0) + 0.5f * float(pixelate)) / float(fb.height);
+	Ray r = ((Camera*)(*d_camera))->get_ray(u, v);
+	glm::vec3 col = fb.color(r, *world, &local_rand_state);
+	rand_state[rand_idx] = local_rand_state;
+
+	col[0] = sqrtf(col[0]);
+	col[1] = sqrtf(col[1]);
+	col[2] = sqrtf(col[2]);
+	glm::vec4 out(col, 1.0f);
+
+	int x_end = x0 + pixelate;
+	int y_end = y0 + pixelate;
+	if (x_end > fb.width) x_end = fb.width;
+	if (y_end > fb.height) y_end = fb.height;
+	for (int py = y0; py < y_end; py++) {
+		for (int px = x0; px < x_end; px++) {
+			fb.writePixel(px, py, out);
+		}
+	}
+}
+
 __global__ void create_world(thrust::device_ptr<World*> d_world, thrust::device_ptr<Camera*> d_camera, CameraInfo camera_info) {
 	if (threadIdx.x == 0 && blockIdx.x == 0) {
 		*d_world = new World();
@@ -187,7 +223,7 @@ void KernelInfo::set_camera(glm::vec3 position, glm::vec3 forward, glm::vec3 up)
 	// completes before the next raytrace kernel on the same stream
 }
 
-void KernelInfo::render(bool camera_moving) {
+void KernelInfo::render(bool camera_moving, int pixelate) {
 
 	check_cuda_errors(cudaGraphicsMapResources(1, &resources));
 	check_cuda_errors(cudaGraphicsResourceGetMappedPointer((void**)&(frame_buffer->device_ptr), &(frame_buffer->buffer_size), resources));
@@ -195,13 +231,23 @@ void KernelInfo::render(bool camera_moving) {
 	int tx = 16;
 	int ty = 16;
 
-	dim3 blocks(nx / tx + 1, ny / ty + 1);
-	dim3 threads(tx, ty);
+	if (pixelate > 1) {
+		int eff_nx = (nx + pixelate - 1) / pixelate;
+		int eff_ny = (ny + pixelate - 1) / pixelate;
+		dim3 blocks((eff_nx + tx - 1) / tx, (eff_ny + ty - 1) / ty);
+		dim3 threads(tx, ty);
 
-	int spp = camera_moving ? 1 : samples;
+		raytrace_pixelated<<<blocks, threads>>> (*frame_buffer, d_world, d_camera, d_rand_state, pixelate);
+	} else {
+		dim3 blocks(nx / tx + 1, ny / ty + 1);
+		dim3 threads(tx, ty);
 
-	// frame buffer is implicitly copied to the device each frame
-	raytrace<<<blocks, threads>>> (*frame_buffer, d_world, d_camera, d_rand_state, spp, 0, 0);
+		int spp = camera_moving ? 1 : samples;
+
+		// frame buffer is implicitly copied to the device each frame
+		raytrace<<<blocks, threads>>> (*frame_buffer, d_world, d_camera, d_rand_state, spp, 0, 0);
+	}
+
 	check_cuda_errors(cudaGetLastError());
 	// wait for the gpu to finish
 	check_cuda_errors(cudaDeviceSynchronize());

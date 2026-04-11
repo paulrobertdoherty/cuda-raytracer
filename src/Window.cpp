@@ -4,17 +4,23 @@
 #include <iomanip>
 #include <memory>
 
-Window::Window(unsigned int width, unsigned int height, int samples, int max_depth, float fov, int tile_size) {
+#include "Rasterizer.h"
+
+Window::Window(unsigned int width, unsigned int height, int samples, int max_depth, float fov, int tile_size, int preview_scale) {
 	Window::width = width;
 	Window::height = height;
 	Window::samples = samples;
 	Window::max_depth = max_depth;
 	Window::fov = fov;
 	Window::tile_size = tile_size;
+	Window::preview_scale = preview_scale < 1 ? 1 : preview_scale;
 	Window::_frame_count = 0;
 	Window::_camera_moving = false;
 	Window::_render_mode = RenderMode::PREVIEW;
 	Window::_enter_was_pressed = false;
+	Window::_r_was_pressed = false;
+	Window::_rasterization_enabled = false;
+	Window::_raster_depth_rb = 0;
 }
 
 static void glfw_error_callback(int code, const char* description) {
@@ -78,6 +84,16 @@ void Window::resize(unsigned int w, unsigned int h) {
 	this->_current_frame->resize(w, h);
 	this->_accum_frame->resize(w, h);
 	this->_blit_quad->resize(w, h);
+	this->_raster_frame->resize(w, h);
+
+	// Resize the depth renderbuffer attached to _raster_frame and re-attach.
+	if (_raster_depth_rb != 0) {
+		glBindRenderbuffer(GL_RENDERBUFFER, _raster_depth_rb);
+		glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+		glBindFramebuffer(GL_FRAMEBUFFER, _raster_frame->framebuffer);
+		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, _raster_depth_rb);
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	}
 }
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
@@ -115,6 +131,24 @@ int Window::init_quad() {
 	_accum_shader->use();
 	glUniform1i(glGetUniformLocation(_accum_shader->ID, "currentFrameTex"), 0);
 	glUniform1i(glGetUniformLocation(_accum_shader->ID, "lastFrameTex"), 1);
+
+	// Rasterization-mode framebuffer (color + depth) and the rasterizer itself.
+	_raster_frame = std::make_unique<Quad>(Window::width, Window::height);
+	_raster_frame->make_FBO();
+
+	glGenRenderbuffers(1, &_raster_depth_rb);
+	glBindRenderbuffer(GL_RENDERBUFFER, _raster_depth_rb);
+	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, Window::width, Window::height);
+	glBindFramebuffer(GL_FRAMEBUFFER, _raster_frame->framebuffer);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, _raster_depth_rb);
+
+	// Initialize raster_frame texture to opaque black so unrasterized sessions
+	// degrade gracefully when used as a RENDER_FINAL underlay.
+	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	_rasterizer = std::make_unique<Rasterizer>();
 
 	return 0;
 }
@@ -156,11 +190,25 @@ void Window::tick_input(float t_diff) {
 		if (_render_mode == RenderMode::PREVIEW) {
 			_render_mode = RenderMode::RENDER_FINAL;
 			_frame_count = 1;
+			// Rasterization is a preview-only feature; turn it off when
+			// transitioning to the final render. The last rasterized frame
+			// remains in _raster_frame and is used as an underlay below.
+			_rasterization_enabled = false;
 		} else if (_render_mode == RenderMode::IDLE) {
 			_render_mode = RenderMode::PREVIEW;
 		}
 	}
 	_enter_was_pressed = enter_down;
+
+	// Detect R key press (rising edge) — toggle rasterization preview.
+	bool r_down = glfwGetKey(_window, GLFW_KEY_R) == GLFW_PRESS;
+	if (r_down && !_r_was_pressed && _render_mode == RenderMode::PREVIEW) {
+		_rasterization_enabled = !_rasterization_enabled;
+		// Restart accumulation when toggling so the first ray-traced frame
+		// after switching back is treated as frame 1.
+		_frame_count = 1;
+	}
+	_r_was_pressed = r_down;
 
 	// Only process camera movement in preview mode
 	if (_render_mode == RenderMode::PREVIEW) {
@@ -199,6 +247,13 @@ void Window::tick_render() {
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	if (_render_mode == RenderMode::RENDER_FINAL) {
+		// Seed _accum_frame with the rasterized underlay (or solid black if
+		// rasterization was never used). Completed ray-traced tiles are blitted
+		// directly into _accum_frame as they finish — no alpha channel needed.
+		copyFrameBufferTexture(Window::width, Window::height,
+			_raster_frame->framebuffer, _raster_frame->texture,
+			_accum_frame->framebuffer, _accum_frame->texture);
+
 		// Tiled progressive rendering: render one tile at a time, displaying
 		// each tile as it completes so the image "paints in" progressively.
 		bool aborted = false;
@@ -224,12 +279,28 @@ void Window::tick_render() {
 				// Upload this tile's pixels from PBO to texture
 				_current_frame->upload_tile(tile_ox, tile_oy, tile_w, tile_h);
 
-				// Draw the full-screen quad to show the partially-updated image
+				// Blit just the completed tile from _current_frame into
+				// _accum_frame, overwriting the rasterized underlay for that
+				// region. Untouched regions keep the rasterized image.
+				glBindFramebuffer(GL_READ_FRAMEBUFFER, _current_frame->framebuffer);
+				glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, _current_frame->texture, 0);
+				glReadBuffer(GL_COLOR_ATTACHMENT0);
+				glBindFramebuffer(GL_DRAW_FRAMEBUFFER, _accum_frame->framebuffer);
+				glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, _accum_frame->texture, 0);
+				glDrawBuffer(GL_COLOR_ATTACHMENT1);
+				glBlitFramebuffer(tile_ox, tile_oy, tile_ox + tile_w, tile_oy + tile_h,
+				                  tile_ox, tile_oy, tile_ox + tile_w, tile_oy + tile_h,
+				                  GL_COLOR_BUFFER_BIT, GL_NEAREST);
+				glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, 0, 0);
+				glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+
+				// Display the progressively-updated _accum_frame to screen.
 				glBindFramebuffer(GL_FRAMEBUFFER, 0);
 				glDisable(GL_DEPTH_TEST);
+				glClear(GL_COLOR_BUFFER_BIT);
 				_shader->use();
 				glActiveTexture(GL_TEXTURE0);
-				glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
+				glBindTexture(GL_TEXTURE_2D, _accum_frame->texture);
 				glBindVertexArray(_current_frame->VAO);
 				glDrawArrays(GL_TRIANGLES, 0, 6);
 
@@ -243,44 +314,64 @@ void Window::tick_render() {
 			}
 		}
 
-		// Copy final (or partial) result to accum frame for display
-		// First upload the full texture from PBO (already done tile by tile above)
-		glBindFramebuffer(GL_FRAMEBUFFER, _current_frame->framebuffer);
-		_shader->use();
-		glBindVertexArray(_current_frame->VAO);
-		glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
-		glDrawArrays(GL_TRIANGLES, 0, 6);
-
-		copyFrameBufferTexture(Window::width, Window::height, _current_frame->framebuffer, _current_frame->texture, _accum_frame->framebuffer, _accum_frame->texture);
-
+		// _accum_frame now holds the complete composited image (raster underlay
+		// with all ray-traced tiles painted on top). IDLE will redisplay it.
 		_render_mode = RenderMode::IDLE;
 	} else if (_render_mode == RenderMode::PREVIEW) {
-		// 1 SPP per frame for responsive preview
-		glBindFramebuffer(GL_FRAMEBUFFER, _current_frame->framebuffer);
-		_current_frame->render_kernel(true);
-		_shader->use();
-		glBindVertexArray(_current_frame->VAO);
-		glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
-		glDrawArrays(GL_TRIANGLES, 0, 6);
+		if (_rasterization_enabled) {
+			// Rasterization preview: draw flat-shaded proxies into _raster_frame.
+			glBindFramebuffer(GL_FRAMEBUFFER, _raster_frame->framebuffer);
+			glViewport(0, 0, width, height);
+			glClearColor(0.05f, 0.05f, 0.07f, 1.0f);
+			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-		// Copy accumulated frames to another texture so that we can sample it
-		copyFrameBufferTexture(Window::width, Window::height, _accum_frame->framebuffer, _accum_frame->texture, _blit_quad->framebuffer, _blit_quad->texture);
+			_rasterizer->render(_current_frame->_renderer->camera_info, (float)width / (float)height);
 
-		// Composite the accumulated frames with the current one (motion blur)
-		glBindFramebuffer(GL_FRAMEBUFFER, _accum_frame->framebuffer);
-		glActiveTexture(GL_TEXTURE0 + 0);
-		glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
-		glActiveTexture(GL_TEXTURE0 + 1);
-		glBindTexture(GL_TEXTURE_2D, _blit_quad->texture);
-		_accum_shader->use();
-		glUniform1i(glGetUniformLocation(_accum_shader->ID, "frameCount"), _frame_count);
-		glUniform1i(glGetUniformLocation(_accum_shader->ID, "cameraMoving"), _camera_moving ? 1 : 0);
-		glDrawArrays(GL_TRIANGLES, 0, 6);
+			// Copy _raster_frame into _accum_frame so the trailing display
+			// pass picks it up unchanged.
+			copyFrameBufferTexture(Window::width, Window::height,
+				_raster_frame->framebuffer, _raster_frame->texture,
+				_accum_frame->framebuffer, _accum_frame->texture);
+		} else {
+			int active_scale = (_camera_moving && preview_scale > 1) ? preview_scale : 1;
+
+			glBindFramebuffer(GL_FRAMEBUFFER, _current_frame->framebuffer);
+			_current_frame->render_kernel(true, active_scale);
+			_shader->use();
+			glBindVertexArray(_current_frame->VAO);
+			glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
+			glDrawArrays(GL_TRIANGLES, 0, 6);
+
+			if (active_scale > 1) {
+				// Pixelated path: copy current frame straight into accum frame.
+				// Skipping the accumulate shader keeps the pixels sharp instead
+				// of smearing the coarse blocks against the previous high-res
+				// accumulated image.
+				copyFrameBufferTexture(Window::width, Window::height,
+					_current_frame->framebuffer, _current_frame->texture,
+					_accum_frame->framebuffer, _accum_frame->texture);
+			} else {
+				// Copy accumulated frames to another texture so that we can sample it
+				copyFrameBufferTexture(Window::width, Window::height, _accum_frame->framebuffer, _accum_frame->texture, _blit_quad->framebuffer, _blit_quad->texture);
+
+				// Composite the accumulated frames with the current one (motion blur)
+				glBindFramebuffer(GL_FRAMEBUFFER, _accum_frame->framebuffer);
+				glActiveTexture(GL_TEXTURE0 + 0);
+				glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
+				glActiveTexture(GL_TEXTURE0 + 1);
+				glBindTexture(GL_TEXTURE_2D, _blit_quad->texture);
+				_accum_shader->use();
+				glUniform1i(glGetUniformLocation(_accum_shader->ID, "frameCount"), _frame_count);
+				glUniform1i(glGetUniformLocation(_accum_shader->ID, "cameraMoving"), _camera_moving ? 1 : 0);
+				glDrawArrays(GL_TRIANGLES, 0, 6);
+			}
+		}
 	}
 	// IDLE: no GPU work, just redisplay the last frame in _accum_frame
 
 	// Render result to screen (always — in IDLE this redisplays the last frame)
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glViewport(0, 0, width, height);
 	_shader->use();
 	glActiveTexture(GL_TEXTURE0 + 0);
 	glBindTexture(GL_TEXTURE_2D, _accum_frame->texture);

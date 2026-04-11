@@ -90,9 +90,9 @@ void Quad::make_FBO() {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-void Quad::render_kernel(bool camera_moving) {
+void Quad::render_kernel(bool camera_moving, int pixelate) {
     glBindTexture(GL_TEXTURE_2D, 0);
-    _renderer->render(camera_moving);
+    _renderer->render(camera_moving, pixelate);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, this->PBO);
     glBindTexture(GL_TEXTURE_2D, this->texture);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_BGRA, GL_UNSIGNED_BYTE, NULL);

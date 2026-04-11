@@ -27,6 +27,7 @@ void print_usage(const char* program_name) {
 		<< "  --depth <int>      Max ray bounce depth (default: 50)\n"
 		<< "  --fov <float>      Camera field of view in degrees (default: 90.0)\n"
 		<< "  --tile-size <int>  Tile size for progressive rendering (default: 64)\n"
+		<< "  --preview-scale <int>  Pixelation factor used while moving the camera in preview (default: 1)\n"
 		<< "  --help             Show this help message\n";
 }
 
@@ -38,6 +39,7 @@ int main(int argc, char* argv[])
 	int max_depth = 50;
 	float fov = 90.0f;
 	int tile_size = DEFAULT_TILE_SIZE;
+	int preview_scale = 1;
 
 	for (int i = 1; i < argc; i++) {
 		std::string arg = argv[i];
@@ -57,6 +59,9 @@ int main(int argc, char* argv[])
 			fov = std::atof(argv[++i]);
 		} else if (arg == "--tile-size" && i + 1 < argc) {
 			tile_size = std::atoi(argv[++i]);
+		} else if (arg == "--preview-scale" && i + 1 < argc) {
+			preview_scale = std::atoi(argv[++i]);
+			if (preview_scale < 1) preview_scale = 1;
 		} else {
 			std::cerr << "Unknown option: " << arg << "\n";
 			print_usage(argv[0]);
@@ -64,7 +69,7 @@ int main(int argc, char* argv[])
 		}
 	}
 
-	Window window(width, height, samples, max_depth, fov, tile_size);
+	Window window(width, height, samples, max_depth, fov, tile_size, preview_scale);
 
 	return window.init();
 }
