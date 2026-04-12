@@ -72,6 +72,7 @@ struct DeviceObjectDesc {
 
     // Mesh: pointers into device buffers owned by KernelInfo
     glm::vec3* d_mesh_vertices;
+    glm::vec3* d_mesh_normals;   // may be nullptr
     glm::vec2* d_mesh_uvs;       // may be nullptr
     int* d_mesh_indices;
     int mesh_vcount;
@@ -93,6 +94,18 @@ struct DeviceObjectDesc {
     int            tex_height;
     int            tex_channels;
     int            has_texture;      // 0/1
+
+    unsigned char* d_normal_pixels;
+    int            normal_width;
+    int            normal_height;
+    int            normal_channels;
+    int            has_normal;
+
+    unsigned char* d_specular_pixels;
+    int            specular_width;
+    int            specular_height;
+    int            specular_channels;
+    int            has_specular;
 };
 
 struct KernelInfo {
@@ -126,6 +139,9 @@ struct KernelInfo {
 
     // Per-mesh UV buffers (device pointers, one per scene mesh).
     std::vector<glm::vec2*> d_mesh_uv_buffers;
+
+    // Per-mesh normal buffers (device pointers, one per scene mesh).
+    std::vector<glm::vec3*> d_mesh_normal_buffers;
 
     // Per-texture pixel buffers (device pointers, one per scene texture).
     std::vector<unsigned char*> d_texture_pixel_buffers;

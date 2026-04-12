@@ -78,14 +78,39 @@ public:
 
 class Lambertian : public Material {
 	Texture* albedo;
+	Texture* normal_map;
+	Texture* specular_map;
 public:
-	__device__ Lambertian(const glm::vec3& a): albedo(new SolidColor(a)) {}
-	__device__ Lambertian(Texture* a) : albedo(a) {}
+	__device__ Lambertian(const glm::vec3& a): albedo(new SolidColor(a)), normal_map(nullptr), specular_map(nullptr) {}
+	__device__ Lambertian(Texture* a, Texture* n = nullptr, Texture* s = nullptr) : albedo(a), normal_map(n), specular_map(s) {}
+	
 	__device__ virtual bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, RandState* local_rand_state) const {
-		glm::vec3 scatter_direction = cosine_weighted_hemisphere(local_rand_state, rec.normal);
+		glm::vec3 n = rec.normal;
+		
+		// Normal mapping
+		if (normal_map) {
+			glm::vec3 nmap = normal_map->value(rec.u, rec.v, rec.p) * 2.0f - 1.0f;
+			n = glm::normalize(nmap.x * rec.tangent + nmap.y * rec.bitangent + nmap.z * rec.normal);
+		}
+
+		// Specular branching
+		if (specular_map) {
+			glm::vec3 spec_color = specular_map->value(rec.u, rec.v, rec.p);
+			float spec_intensity = (spec_color.r + spec_color.g + spec_color.b) / 3.0f;
+			if (curand_uniform(local_rand_state) < spec_intensity) {
+				// Scatter specularly
+				glm::vec3 reflected = reflect(glm::normalize(r_in.direction), n);
+				scattered = Ray(rec.p, reflected);
+				attenuation = albedo->value(rec.u, rec.v, rec.p);
+				return (glm::dot(scattered.direction, n) > 0.0f);
+			}
+		}
+
+		// Diffuse scattering
+		glm::vec3 scatter_direction = cosine_weighted_hemisphere(local_rand_state, n);
 
 		if (near_zero(scatter_direction)) {
-			scatter_direction = rec.normal;
+			scatter_direction = n;
 		}
 
 		scattered = Ray(rec.p, glm::normalize(scatter_direction));
@@ -95,6 +120,8 @@ public:
 
 	__device__ ~Lambertian() {
 		delete albedo;
+		if (normal_map) delete normal_map;
+		if (specular_map) delete specular_map;
 	}
 };
 

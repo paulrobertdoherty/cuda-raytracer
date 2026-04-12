@@ -133,16 +133,30 @@ __global__ void build_world_from_desc(thrust::device_ptr<World*> d_world,
 
 		Material* mat = nullptr;
 		switch (d.material) {
-			case DeviceMaterialKind::Lambertian:
+			case DeviceMaterialKind::Lambertian: {
+				Texture* albedo = nullptr;
 				if (d.use_checker) {
-					mat = new Lambertian(new CheckerTexture(d.checker_color1, d.checker_color2));
+					albedo = new CheckerTexture(d.checker_color1, d.checker_color2);
 				} else if (d.has_texture && d.d_texture_pixels) {
-					mat = new Lambertian(new ImageTexture(
-						d.d_texture_pixels, d.tex_width, d.tex_height, d.tex_channels));
+					albedo = new ImageTexture(
+						d.d_texture_pixels, d.tex_width, d.tex_height, d.tex_channels);
 				} else {
-					mat = new Lambertian(d.albedo);
+					albedo = new SolidColor(d.albedo);
 				}
+				
+				Texture* normal = nullptr;
+				if (d.has_normal && d.d_normal_pixels) {
+					normal = new ImageTexture(d.d_normal_pixels, d.normal_width, d.normal_height, d.normal_channels);
+				}
+
+				Texture* specular = nullptr;
+				if (d.has_specular && d.d_specular_pixels) {
+					specular = new ImageTexture(d.d_specular_pixels, d.specular_width, d.specular_height, d.specular_channels);
+				}
+
+				mat = new Lambertian(albedo, normal, specular);
 				break;
+			}
 			case DeviceMaterialKind::Metal:
 				mat = new Metal(d.albedo, d.fuzz);
 				break;
@@ -169,7 +183,7 @@ __global__ void build_world_from_desc(thrust::device_ptr<World*> d_world,
 				h = new Disc(d.disc_center, d.disc_normal, d.disc_radius, mat);
 				break;
 			case DeviceObjectKind::Mesh:
-				h = new TriangleMesh(d.d_mesh_vertices, d.d_mesh_uvs, d.mesh_vcount,
+				h = new TriangleMesh(d.d_mesh_vertices, d.d_mesh_normals, d.d_mesh_uvs, d.mesh_vcount,
 				                     d.d_mesh_indices, d.mesh_icount,
 				                     d.mesh_translate, d.mesh_scale,
 				                     mat,
@@ -361,6 +375,9 @@ KernelInfo::~KernelInfo() {
 	for (glm::vec2* p : d_mesh_uv_buffers) {
 		if (p) cudaFree(p);
 	}
+	for (glm::vec3* p : d_mesh_normal_buffers) {
+		if (p) cudaFree(p);
+	}
 	for (unsigned char* p : d_texture_pixel_buffers) {
 		if (p) cudaFree(p);
 	}
@@ -373,6 +390,7 @@ KernelInfo::~KernelInfo() {
 	d_mesh_tri_id_buffers.clear();
 	d_mesh_tri_id_counts.clear();
 	d_mesh_uv_buffers.clear();
+	d_mesh_normal_buffers.clear();
 	d_texture_pixel_buffers.clear();
 	d_texture_widths.clear();
 	d_texture_heights.clear();
@@ -407,6 +425,9 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 	for (size_t i = scene_meshes.size(); i < d_mesh_uv_buffers.size(); i++) {
 		if (d_mesh_uv_buffers[i]) cudaFree(d_mesh_uv_buffers[i]);
 	}
+	for (size_t i = scene_meshes.size(); i < d_mesh_normal_buffers.size(); i++) {
+		if (d_mesh_normal_buffers[i]) cudaFree(d_mesh_normal_buffers[i]);
+	}
 	d_mesh_vertex_buffers.resize(scene_meshes.size(), nullptr);
 	d_mesh_index_buffers.resize(scene_meshes.size(), nullptr);
 	d_mesh_vcounts.resize(scene_meshes.size(), 0);
@@ -416,6 +437,7 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 	d_mesh_tri_id_buffers.resize(scene_meshes.size(), nullptr);
 	d_mesh_tri_id_counts.resize(scene_meshes.size(), 0);
 	d_mesh_uv_buffers.resize(scene_meshes.size(), nullptr);
+	d_mesh_normal_buffers.resize(scene_meshes.size(), nullptr);
 
 	for (size_t i = 0; i < scene_meshes.size(); i++) {
 		const Mesh* m = scene_meshes[i].get();
@@ -431,9 +453,11 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 		if (d_mesh_vertex_buffers[i]) cudaFree(d_mesh_vertex_buffers[i]);
 		if (d_mesh_index_buffers[i]) cudaFree(d_mesh_index_buffers[i]);
 		if (d_mesh_uv_buffers[i])    cudaFree(d_mesh_uv_buffers[i]);
+		if (d_mesh_normal_buffers[i]) cudaFree(d_mesh_normal_buffers[i]);
 		d_mesh_vertex_buffers[i] = nullptr;
 		d_mesh_index_buffers[i] = nullptr;
 		d_mesh_uv_buffers[i] = nullptr;
+		d_mesh_normal_buffers[i] = nullptr;
 
 		if (vcount <= 0 || icount <= 0) {
 			d_mesh_vcounts[i] = 0;
@@ -446,6 +470,10 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 		positions.reserve(vcount);
 		for (const auto& v : m->vertices) positions.push_back(v.position);
 
+		std::vector<glm::vec3> normals;
+		normals.reserve(vcount);
+		for (const auto& v : m->vertices) normals.push_back(v.normal);
+
 		std::vector<glm::vec2> uvs;
 		uvs.reserve(vcount);
 		for (const auto& v : m->vertices) uvs.push_back(v.uv);
@@ -455,10 +483,15 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 		for (unsigned int u : m->indices) int_indices.push_back((int)u);
 
 		glm::vec3* d_verts = nullptr;
+		glm::vec3* d_norm = nullptr;
 		glm::vec2* d_uv = nullptr;
 		int* d_idx = nullptr;
 		check_cuda_errors(cudaMalloc(&d_verts, sizeof(glm::vec3) * vcount));
 		check_cuda_errors(cudaMemcpy(d_verts, positions.data(),
+		                             sizeof(glm::vec3) * vcount,
+		                             cudaMemcpyHostToDevice));
+		check_cuda_errors(cudaMalloc(&d_norm, sizeof(glm::vec3) * vcount));
+		check_cuda_errors(cudaMemcpy(d_norm, normals.data(),
 		                             sizeof(glm::vec3) * vcount,
 		                             cudaMemcpyHostToDevice));
 		check_cuda_errors(cudaMalloc(&d_uv, sizeof(glm::vec2) * vcount));
@@ -471,6 +504,7 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 		                             cudaMemcpyHostToDevice));
 
 		d_mesh_vertex_buffers[i] = d_verts;
+		d_mesh_normal_buffers[i] = d_norm;
 		d_mesh_uv_buffers[i] = d_uv;
 		d_mesh_index_buffers[i] = d_idx;
 		d_mesh_vcounts[i] = vcount;
@@ -606,6 +640,7 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 				}
 				d.kind = DeviceObjectKind::Mesh;
 				d.d_mesh_vertices = d_mesh_vertex_buffers[o.mesh_index];
+				d.d_mesh_normals  = d_mesh_normal_buffers[o.mesh_index];
 				d.d_mesh_uvs      = d_mesh_uv_buffers[o.mesh_index];
 				d.d_mesh_indices  = d_mesh_index_buffers[o.mesh_index];
 				d.mesh_vcount     = d_mesh_vcounts[o.mesh_index];
@@ -619,7 +654,7 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 				d.mesh_bvh_node_count     = d_mesh_bvh_node_counts[o.mesh_index];
 				d.d_mesh_reordered_tri_ids = d_mesh_tri_id_buffers[o.mesh_index];
 				d.mesh_tri_id_count        = d_mesh_tri_id_counts[o.mesh_index];
-				// Image texture
+				// Image textures
 				if (o.texture_index >= 0 &&
 				    o.texture_index < (int)d_texture_pixel_buffers.size() &&
 				    d_texture_pixel_buffers[o.texture_index]) {
@@ -631,6 +666,32 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 				} else {
 					d.d_texture_pixels = nullptr;
 					d.has_texture      = 0;
+				}
+
+				if (o.normal_texture_index >= 0 &&
+				    o.normal_texture_index < (int)d_texture_pixel_buffers.size() &&
+				    d_texture_pixel_buffers[o.normal_texture_index]) {
+					d.d_normal_pixels = d_texture_pixel_buffers[o.normal_texture_index];
+					d.normal_width    = d_texture_widths[o.normal_texture_index];
+					d.normal_height   = d_texture_heights[o.normal_texture_index];
+					d.normal_channels = d_texture_channels[o.normal_texture_index];
+					d.has_normal      = 1;
+				} else {
+					d.d_normal_pixels = nullptr;
+					d.has_normal      = 0;
+				}
+
+				if (o.specular_texture_index >= 0 &&
+				    o.specular_texture_index < (int)d_texture_pixel_buffers.size() &&
+				    d_texture_pixel_buffers[o.specular_texture_index]) {
+					d.d_specular_pixels = d_texture_pixel_buffers[o.specular_texture_index];
+					d.specular_width    = d_texture_widths[o.specular_texture_index];
+					d.specular_height   = d_texture_heights[o.specular_texture_index];
+					d.specular_channels = d_texture_channels[o.specular_texture_index];
+					d.has_specular      = 1;
+				} else {
+					d.d_specular_pixels = nullptr;
+					d.has_specular      = 0;
 				}
 				break;
 			}

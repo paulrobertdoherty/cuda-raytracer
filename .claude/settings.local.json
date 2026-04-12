@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /c/Users/paul/Documents/Ray-Tracing/cuda-raytracer -type d -not -path */out/* -not -path */.git/*)",
+      "Bash(wc:*)",
+      "Bash(xargs grep:*)"
+    ]
+  }
+}

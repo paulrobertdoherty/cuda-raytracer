@@ -18,6 +18,7 @@
 class TriangleMesh : public Hittable {
 public:
 	glm::vec3* d_vertices; // device pointer, count = vertex_count
+	glm::vec3* d_normals;  // device pointer, count = vertex_count (may be nullptr)
 	glm::vec2* d_uvs;      // device pointer, count = vertex_count (may be nullptr)
 	int* d_indices;        // device pointer, count = index_count (multiple of 3)
 	int vertex_count;
@@ -33,14 +34,14 @@ public:
 	int* d_reordered_tri_ids;
 	int tri_id_count;
 
-	__device__ TriangleMesh(glm::vec3* verts, glm::vec2* uvs, int vcount,
+	__device__ TriangleMesh(glm::vec3* verts, glm::vec3* normals, glm::vec2* uvs, int vcount,
 	                         int* indices, int icount,
 	                         glm::vec3 translate, float scale,
 	                         Material* mat,
 	                         glm::vec3 world_min, glm::vec3 world_max,
 	                         MeshBVHNode* bvh_nodes, int bvh_count,
 	                         int* reordered_tri_ids, int tri_count)
-		: d_vertices(verts), d_uvs(uvs), d_indices(indices),
+		: d_vertices(verts), d_normals(normals), d_uvs(uvs), d_indices(indices),
 		  vertex_count(vcount), index_count(icount),
 		  translate(translate), scale(scale),
 		  world_aabb(world_min, world_max), mat_ptr(mat),
@@ -135,8 +136,9 @@ public:
 					rec.p = r.at(t); // world-space hit point
 					// If UV buffer present, interpolate texture coordinates
 					// from the triangle vertices using barycentric coords.
+					glm::vec2 uv0(0), uv1(0), uv2(0);
 					if (d_uvs) {
-						glm::vec2 uv0 = d_uvs[i0], uv1 = d_uvs[i1], uv2 = d_uvs[i2];
+						uv0 = d_uvs[i0]; uv1 = d_uvs[i1]; uv2 = d_uvs[i2];
 						glm::vec2 interp = (1.0f - u - v) * uv0 + u * uv1 + v * uv2;
 						rec.u = interp.x;
 						rec.v = interp.y;
@@ -144,9 +146,43 @@ public:
 						rec.u = u;
 						rec.v = v;
 					}
-					rec.mat_ptr = mat_ptr;
-					glm::vec3 outward_normal = glm::normalize(glm::cross(edge1, edge2));
+
+					glm::vec3 outward_normal;
+					if (d_normals) {
+						glm::vec3 n0 = d_normals[i0];
+						glm::vec3 n1 = d_normals[i1];
+						glm::vec3 n2 = d_normals[i2];
+						outward_normal = glm::normalize((1.0f - u - v) * n0 + u * n1 + v * n2);
+					} else {
+						outward_normal = glm::normalize(glm::cross(edge1, edge2));
+					}
 					rec.set_face_normal(r, outward_normal);
+
+					// Compute tangent and bitangent for normal mapping
+					if (d_uvs) {
+						glm::vec2 deltaUV1 = uv1 - uv0;
+						glm::vec2 deltaUV2 = uv2 - uv0;
+
+						float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
+
+						if (isinf(f) || isnan(f)) {
+							// Degenerate UVs, use arbitrary ONB
+							glm::vec3 a = (fabsf(rec.normal.x) > 0.9f) ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
+							rec.bitangent = glm::normalize(glm::cross(rec.normal, a));
+							rec.tangent = glm::cross(rec.bitangent, rec.normal);
+						} else {
+							glm::vec3 tangent = f * (deltaUV2.y * edge1 - deltaUV1.y * edge2);
+							rec.tangent = glm::normalize(tangent - rec.normal * glm::dot(rec.normal, tangent));
+							rec.bitangent = glm::normalize(glm::cross(rec.normal, rec.tangent));
+						}
+					} else {
+						// Build arbitrary ONB
+						glm::vec3 a = (fabsf(rec.normal.x) > 0.9f) ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
+						rec.bitangent = glm::normalize(glm::cross(rec.normal, a));
+						rec.tangent = glm::cross(rec.bitangent, rec.normal);
+					}
+
+					rec.mat_ptr = mat_ptr;
 					hit_any = true;
 				}
 			} else {

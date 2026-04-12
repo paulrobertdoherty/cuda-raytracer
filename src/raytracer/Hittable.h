@@ -17,6 +17,8 @@ struct HitRecord {
 	float u, v;
 	glm::vec3 p;
 	glm::vec3 normal;
+	glm::vec3 tangent;
+	glm::vec3 bitangent;
 	Material* mat_ptr;
 	bool front_face;
 

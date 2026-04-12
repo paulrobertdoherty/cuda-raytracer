@@ -112,13 +112,15 @@ int Scene::add_obj_from_file(const std::string& obj_path,
 		return -1;
 	}
 	mesh->upload();
-	std::string actual_tex_path = texture_path;
-	if (actual_tex_path.empty() && !mesh->default_diffuse_tex.empty()) {
-		actual_tex_path = mesh->default_diffuse_tex;
-	}
-
 	int mesh_idx = (int)_meshes.size();
 	_meshes.push_back(std::move(mesh));
+
+	const Mesh* loaded_mesh_ptr = _meshes.back().get();
+
+	std::string actual_tex_path = texture_path;
+	if (actual_tex_path.empty() && !loaded_mesh_ptr->default_diffuse_tex.empty()) {
+		actual_tex_path = loaded_mesh_ptr->default_diffuse_tex;
+	}
 
 	int tex_idx = -1;
 	if (!actual_tex_path.empty()) {
@@ -131,6 +133,28 @@ int Scene::add_obj_from_file(const std::string& obj_path,
 		}
 	}
 
+	int normal_tex_idx = -1;
+	if (!loaded_mesh_ptr->default_normal_tex.empty()) {
+		auto tex = std::make_unique<GLTexture>();
+		if (tex->load(loaded_mesh_ptr->default_normal_tex)) {
+			normal_tex_idx = (int)_textures.size();
+			_textures.push_back(std::move(tex));
+		} else {
+			std::cerr << "[Scene] Failed to load normal texture: " << loaded_mesh_ptr->default_normal_tex << std::endl;
+		}
+	}
+
+	int specular_tex_idx = -1;
+	if (!loaded_mesh_ptr->default_specular_tex.empty()) {
+		auto tex = std::make_unique<GLTexture>();
+		if (tex->load(loaded_mesh_ptr->default_specular_tex)) {
+			specular_tex_idx = (int)_textures.size();
+			_textures.push_back(std::move(tex));
+		} else {
+			std::cerr << "[Scene] Failed to load specular texture: " << loaded_mesh_ptr->default_specular_tex << std::endl;
+		}
+	}
+
 	SceneObject obj;
 	obj.kind = ProxyKind::Mesh;
 	obj.color = glm::vec3(1.0f);
@@ -138,6 +162,8 @@ int Scene::add_obj_from_file(const std::string& obj_path,
 	obj.scale = scale;
 	obj.mesh_index = mesh_idx;
 	obj.texture_index = tex_idx;
+	obj.normal_texture_index = normal_tex_idx;
+	obj.specular_texture_index = specular_tex_idx;
 	obj.material = SceneMaterial::Lambertian;
 	obj.albedo = glm::vec3(0.8f);
 

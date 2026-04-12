@@ -59,6 +59,8 @@ struct SceneObject {
 	// Mesh: index into Scene's mesh / texture lists. -1 if not applicable.
 	int mesh_index = -1;
 	int texture_index = -1;
+	int normal_texture_index = -1;
+	int specular_texture_index = -1;
 
 	// Checker texture for Lambertian surfaces (e.g. ground)
 	bool use_checker = false;
