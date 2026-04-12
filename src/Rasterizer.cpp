@@ -7,6 +7,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <cmath>
+#include <vector>
 
 Rasterizer::Rasterizer(ShaderManager& shaders, const Scene& scene)
 	: _shaders(shaders), _scene(scene) {
@@ -176,6 +177,26 @@ void Rasterizer::render(const CameraInfo& cam, float aspect) {
 			};
 			glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_DYNAMIC_DRAW);
 			glDrawArrays(GL_TRIANGLES, 0, 6);
+		} else if (p.kind == ProxyKind::Disc) {
+			// Triangle fan approximation of the disc (32 segments).
+			const glm::vec3 n = glm::normalize(p.disc_normal);
+			glm::vec3 a = (fabsf(n.x) > 0.9f) ? glm::vec3(0.0f, 1.0f, 0.0f)
+			                                    : glm::vec3(1.0f, 0.0f, 0.0f);
+			glm::vec3 bt = glm::normalize(glm::cross(n, a));
+			glm::vec3 t  = glm::cross(bt, n);
+			const int SEGS = 32;
+			const float pi = 3.14159265358979323846f;
+			std::vector<float> fan;
+			fan.reserve((SEGS + 2) * 3);
+			// center
+			fan.push_back(p.center.x); fan.push_back(p.center.y); fan.push_back(p.center.z);
+			for (int s = 0; s <= SEGS; s++) {
+				float angle = 2.0f * pi * (float)s / (float)SEGS;
+				glm::vec3 pt = p.center + p.radius * (cosf(angle) * t + sinf(angle) * bt);
+				fan.push_back(pt.x); fan.push_back(pt.y); fan.push_back(pt.z);
+			}
+			glBufferData(GL_ARRAY_BUFFER, fan.size() * sizeof(float), fan.data(), GL_DYNAMIC_DRAW);
+			glDrawArrays(GL_TRIANGLE_FAN, 0, SEGS + 2);
 		}
 	}
 

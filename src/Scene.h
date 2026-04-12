@@ -13,7 +13,8 @@ enum class ProxyKind {
 	Sphere,
 	Triangle,
 	Rect,
-	Mesh
+	Mesh,
+	Disc
 };
 
 // Material descriptors kept host-side so we can drive the CUDA world rebuild.
@@ -52,9 +53,17 @@ struct SceneObject {
 	// Rect: corner Q + edge vectors u, v
 	glm::vec3 Q = glm::vec3(0.0f), u = glm::vec3(0.0f), v = glm::vec3(0.0f);
 
+	// Disc: uses center + radius fields above; disc_normal is the plane normal
+	glm::vec3 disc_normal = glm::vec3(0.0f, -1.0f, 0.0f);
+
 	// Mesh: index into Scene's mesh / texture lists. -1 if not applicable.
 	int mesh_index = -1;
 	int texture_index = -1;
+
+	// Checker texture for Lambertian surfaces (e.g. ground)
+	bool use_checker = false;
+	glm::vec3 checker_color1 = glm::vec3(0.2f, 0.3f, 0.1f);
+	glm::vec3 checker_color2 = glm::vec3(0.9f, 0.9f, 0.9f);
 };
 
 class Scene {

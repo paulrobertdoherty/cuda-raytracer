@@ -26,7 +26,8 @@ enum class DeviceObjectKind : int {
     Sphere = 0,
     Triangle = 1,
     Rect = 2,
-    Mesh = 3
+    Mesh = 3,
+    Disc = 4
 };
 
 enum class DeviceMaterialKind : int {
@@ -59,8 +60,19 @@ struct DeviceObjectDesc {
     glm::vec3 rect_u;
     glm::vec3 rect_v;
 
+    // Disc
+    glm::vec3 disc_center;
+    glm::vec3 disc_normal;
+    float     disc_radius;
+
+    // Checker texture (Lambertian surfaces)
+    int       use_checker;
+    glm::vec3 checker_color1;
+    glm::vec3 checker_color2;
+
     // Mesh: pointers into device buffers owned by KernelInfo
     glm::vec3* d_mesh_vertices;
+    glm::vec2* d_mesh_uvs;       // may be nullptr
     int* d_mesh_indices;
     int mesh_vcount;
     int mesh_icount;
@@ -74,6 +86,13 @@ struct DeviceObjectDesc {
     int          mesh_bvh_node_count;
     int*         d_mesh_reordered_tri_ids;
     int          mesh_tri_id_count;
+
+    // Image texture for mesh (device pointer owned by KernelInfo)
+    unsigned char* d_texture_pixels; // nullptr if no texture
+    int            tex_width;
+    int            tex_height;
+    int            tex_channels;
+    int            has_texture;      // 0/1
 };
 
 struct KernelInfo {
@@ -104,6 +123,15 @@ struct KernelInfo {
     std::vector<int>          d_mesh_bvh_node_counts;
     std::vector<int*>         d_mesh_tri_id_buffers;
     std::vector<int>          d_mesh_tri_id_counts;
+
+    // Per-mesh UV buffers (device pointers, one per scene mesh).
+    std::vector<glm::vec2*> d_mesh_uv_buffers;
+
+    // Per-texture pixel buffers (device pointers, one per scene texture).
+    std::vector<unsigned char*> d_texture_pixel_buffers;
+    std::vector<int>            d_texture_widths;
+    std::vector<int>            d_texture_heights;
+    std::vector<int>            d_texture_channels;
 
     KernelInfo() {}
     ~KernelInfo();

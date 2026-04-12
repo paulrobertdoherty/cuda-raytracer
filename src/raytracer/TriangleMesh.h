@@ -18,6 +18,7 @@
 class TriangleMesh : public Hittable {
 public:
 	glm::vec3* d_vertices; // device pointer, count = vertex_count
+	glm::vec2* d_uvs;      // device pointer, count = vertex_count (may be nullptr)
 	int* d_indices;        // device pointer, count = index_count (multiple of 3)
 	int vertex_count;
 	int index_count;
@@ -32,14 +33,14 @@ public:
 	int* d_reordered_tri_ids;
 	int tri_id_count;
 
-	__device__ TriangleMesh(glm::vec3* verts, int vcount,
+	__device__ TriangleMesh(glm::vec3* verts, glm::vec2* uvs, int vcount,
 	                         int* indices, int icount,
 	                         glm::vec3 translate, float scale,
 	                         Material* mat,
 	                         glm::vec3 world_min, glm::vec3 world_max,
 	                         MeshBVHNode* bvh_nodes, int bvh_count,
 	                         int* reordered_tri_ids, int tri_count)
-		: d_vertices(verts), d_indices(indices),
+		: d_vertices(verts), d_uvs(uvs), d_indices(indices),
 		  vertex_count(vcount), index_count(icount),
 		  translate(translate), scale(scale),
 		  world_aabb(world_min, world_max), mat_ptr(mat),
@@ -132,8 +133,17 @@ public:
 					closest = t;
 					rec.t = t;
 					rec.p = r.at(t); // world-space hit point
-					rec.u = u;
-					rec.v = v;
+					// If UV buffer present, interpolate texture coordinates
+					// from the triangle vertices using barycentric coords.
+					if (d_uvs) {
+						glm::vec2 uv0 = d_uvs[i0], uv1 = d_uvs[i1], uv2 = d_uvs[i2];
+						glm::vec2 interp = (1.0f - u - v) * uv0 + u * uv1 + v * uv2;
+						rec.u = interp.x;
+						rec.v = interp.y;
+					} else {
+						rec.u = u;
+						rec.v = v;
+					}
 					rec.mat_ptr = mat_ptr;
 					glm::vec3 outward_normal = glm::normalize(glm::cross(edge1, edge2));
 					rec.set_face_normal(r, outward_normal);

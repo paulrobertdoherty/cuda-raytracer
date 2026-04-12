@@ -60,53 +60,44 @@ SceneObject make_rect(const glm::vec3& Q, const glm::vec3& u, const glm::vec3& v
 	return o;
 }
 
+SceneObject make_disc(const glm::vec3& center, const glm::vec3& normal, float radius,
+                      const glm::vec3& color, const glm::vec3& emission) {
+	SceneObject o;
+	o.kind = ProxyKind::Disc;
+	o.color = color;
+	o.center = center;
+	o.disc_normal = normal;
+	o.radius = radius;
+	o.emission = emission;
+	o.material = SceneMaterial::Emissive;
+	o.is_light = true;
+	return o;
+}
+
 } // namespace
 
 Scene::Scene() {
-	// Matches the hardcoded scene from kernel.cu::create_world so the default
-	// raytraced image does not regress.
-	_objects.push_back(make_sphere(glm::vec3(0, 0, -1), 0.5f,
-		glm::vec3(0.8f, 0.3f, 0.3f),
-		SceneMaterial::Lambertian, glm::vec3(0.8f, 0.3f, 0.3f)));
-
-	// Dielectric sphere (glass)
-	_objects.push_back(make_sphere(glm::vec3(-1.01f, 0, -1), 0.5f,
-		glm::vec3(0.85f, 0.9f, 0.95f),
-		SceneMaterial::Dielectric, glm::vec3(1.0f), 0.0f, 1.5f));
-
-	// Second dielectric sphere high up in the sky
-	_objects.push_back(make_sphere(glm::vec3(-1, 10, -1), 0.5f,
-		glm::vec3(0.85f, 0.9f, 0.95f),
-		SceneMaterial::Dielectric, glm::vec3(1.0f), 0.0f, 1.5f));
-
-	// Metal sphere
-	_objects.push_back(make_sphere(glm::vec3(1, 0, -1), 0.5f,
-		glm::vec3(0.8f, 0.8f, 0.8f),
-		SceneMaterial::Metal, glm::vec3(0.8f, 0.8f, 0.8f), 0.3f));
-
-	// Ground sphere — for the rasterizer proxy we use the average of the
-	// two checker colors as a flat fallback.
+	// Ground sphere with checker texture.
 	glm::vec3 ground_proxy = 0.5f * (glm::vec3(0.2f, 0.3f, 0.1f) + glm::vec3(0.9f));
-	_objects.push_back(make_sphere(glm::vec3(0, -1000.5f, 0), 1000.0f,
-		ground_proxy,
-		SceneMaterial::Lambertian, ground_proxy));
+	SceneObject ground = make_sphere(glm::vec3(0, -1000.5f, 0), 1000.0f,
+		ground_proxy, SceneMaterial::Lambertian, ground_proxy);
+	ground.use_checker    = true;
+	ground.checker_color1 = glm::vec3(0.2f, 0.3f, 0.1f);
+	ground.checker_color2 = glm::vec3(0.9f, 0.9f, 0.9f);
+	_objects.push_back(ground);
 
-	// Emissive sphere light
-	_objects.push_back(make_sphere(glm::vec3(0, 3, -1), 1.0f,
-		glm::vec3(1.0f),
-		SceneMaterial::Emissive, glm::vec3(1.0f), 0.0f, 1.5f, true,
-		glm::vec3(4.0f, 4.0f, 4.0f)));
+	// Large metal sphere below the backpack (backpack loads at y≈0.5, scale=0.5)
+	_objects.push_back(make_sphere(glm::vec3(0.0f, -0.2f, -1.0f), 0.3f,
+		glm::vec3(0.8f, 0.8f, 0.8f),
+		SceneMaterial::Metal, glm::vec3(0.8f, 0.8f, 0.8f), 0.1f));
 
-	// Emissive area light rectangle
-	_objects.push_back(make_rect(
-		glm::vec3(-1, 3, -2), glm::vec3(2, 0, 0), glm::vec3(0, 0, 2),
-		glm::vec3(1.0f), glm::vec3(4.0f, 4.0f, 4.0f)));
-
-	// Blue triangle
-	_objects.push_back(make_triangle(
-		glm::vec3(-2, 0, -2), glm::vec3(-1, 2, -2), glm::vec3(0, 0, -2),
-		glm::vec3(0.1f, 0.2f, 0.8f),
-		glm::vec3(0.1f, 0.2f, 0.8f)));
+	// Emissive disc light (replaces old sphere + rect lights)
+	_objects.push_back(make_disc(
+		glm::vec3(0.0f, 3.0f, -1.0f),   // center
+		glm::vec3(0.0f, -1.0f, 0.0f),  // normal (pointing downward)
+		1.0f,                             // radius
+		glm::vec3(1.0f),                  // rasterizer color
+		glm::vec3(4.0f, 4.0f, 4.0f)));  // emission
 }
 
 Scene::~Scene() = default;
@@ -195,6 +186,21 @@ bool hit_triangle(const glm::vec3& ray_o, const glm::vec3& ray_d,
 	return true;
 }
 
+bool hit_disc(const glm::vec3& ray_o, const glm::vec3& ray_d,
+              const glm::vec3& center, const glm::vec3& normal,
+              float radius, float& out_t) {
+	float denom = glm::dot(normal, ray_d);
+	if (std::fabs(denom) < 1e-8f) return false;
+	float D = glm::dot(normal, center);
+	float t = (D - glm::dot(normal, ray_o)) / denom;
+	if (t < 1e-3f) return false;
+	glm::vec3 p = ray_o + t * ray_d;
+	glm::vec3 d = p - center;
+	if (glm::dot(d, d) > radius * radius) return false;
+	out_t = t;
+	return true;
+}
+
 bool hit_aabb(const glm::vec3& ray_o, const glm::vec3& ray_d,
               const glm::vec3& mn, const glm::vec3& mx,
               float& out_t) {
@@ -253,6 +259,13 @@ bool Scene::ray_intersect(const glm::vec3& ray_origin,
 				if (h1 && h2) { t = std::min(t1, t2); hit = true; }
 				else if (h1) { t = t1; hit = true; }
 				else if (h2) { t = t2; hit = true; }
+				break;
+			}
+			case ProxyKind::Disc: {
+				glm::vec3 c = o.center + o.position;
+				float r = o.radius * o.scale;
+				glm::vec3 n = glm::normalize(o.disc_normal);
+				hit = hit_disc(ray_origin, ray_dir, c, n, r, t);
 				break;
 			}
 			case ProxyKind::Mesh: {

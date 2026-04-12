@@ -16,6 +16,7 @@
 #include "Rectangle.h"
 #include "Triangle.h"
 #include "TriangleMesh.h"
+#include "Disc.h"
 #include "World.h"
 #include "Camera.h"
 #include "BVHNode.h"
@@ -26,6 +27,7 @@
 #include "raytracer/kernel.h"
 #include "Scene.h"
 #include "Mesh.h"
+#include "GLTexture.h"
 #include "MeshBVHBuilder.h"
 
 #include <vector>
@@ -132,7 +134,14 @@ __global__ void build_world_from_desc(thrust::device_ptr<World*> d_world,
 		Material* mat = nullptr;
 		switch (d.material) {
 			case DeviceMaterialKind::Lambertian:
-				mat = new Lambertian(d.albedo);
+				if (d.use_checker) {
+					mat = new Lambertian(new CheckerTexture(d.checker_color1, d.checker_color2));
+				} else if (d.has_texture && d.d_texture_pixels) {
+					mat = new Lambertian(new ImageTexture(
+						d.d_texture_pixels, d.tex_width, d.tex_height, d.tex_channels));
+				} else {
+					mat = new Lambertian(d.albedo);
+				}
 				break;
 			case DeviceMaterialKind::Metal:
 				mat = new Metal(d.albedo, d.fuzz);
@@ -156,8 +165,11 @@ __global__ void build_world_from_desc(thrust::device_ptr<World*> d_world,
 			case DeviceObjectKind::Rect:
 				h = new Rect(d.rect_Q, d.rect_u, d.rect_v, mat);
 				break;
+			case DeviceObjectKind::Disc:
+				h = new Disc(d.disc_center, d.disc_normal, d.disc_radius, mat);
+				break;
 			case DeviceObjectKind::Mesh:
-				h = new TriangleMesh(d.d_mesh_vertices, d.mesh_vcount,
+				h = new TriangleMesh(d.d_mesh_vertices, d.d_mesh_uvs, d.mesh_vcount,
 				                     d.d_mesh_indices, d.mesh_icount,
 				                     d.mesh_translate, d.mesh_scale,
 				                     mat,
@@ -346,6 +358,12 @@ KernelInfo::~KernelInfo() {
 	for (int* p : d_mesh_tri_id_buffers) {
 		if (p) cudaFree(p);
 	}
+	for (glm::vec2* p : d_mesh_uv_buffers) {
+		if (p) cudaFree(p);
+	}
+	for (unsigned char* p : d_texture_pixel_buffers) {
+		if (p) cudaFree(p);
+	}
 	d_mesh_vertex_buffers.clear();
 	d_mesh_index_buffers.clear();
 	d_mesh_vcounts.clear();
@@ -354,6 +372,11 @@ KernelInfo::~KernelInfo() {
 	d_mesh_bvh_node_counts.clear();
 	d_mesh_tri_id_buffers.clear();
 	d_mesh_tri_id_counts.clear();
+	d_mesh_uv_buffers.clear();
+	d_texture_pixel_buffers.clear();
+	d_texture_widths.clear();
+	d_texture_heights.clear();
+	d_texture_channels.clear();
 
 	delete frame_buffer;
 }
@@ -381,6 +404,9 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 		if (d_mesh_bvh_buffers[i]) cudaFree(d_mesh_bvh_buffers[i]);
 		if (d_mesh_tri_id_buffers[i]) cudaFree(d_mesh_tri_id_buffers[i]);
 	}
+	for (size_t i = scene_meshes.size(); i < d_mesh_uv_buffers.size(); i++) {
+		if (d_mesh_uv_buffers[i]) cudaFree(d_mesh_uv_buffers[i]);
+	}
 	d_mesh_vertex_buffers.resize(scene_meshes.size(), nullptr);
 	d_mesh_index_buffers.resize(scene_meshes.size(), nullptr);
 	d_mesh_vcounts.resize(scene_meshes.size(), 0);
@@ -389,6 +415,7 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 	d_mesh_bvh_node_counts.resize(scene_meshes.size(), 0);
 	d_mesh_tri_id_buffers.resize(scene_meshes.size(), nullptr);
 	d_mesh_tri_id_counts.resize(scene_meshes.size(), 0);
+	d_mesh_uv_buffers.resize(scene_meshes.size(), nullptr);
 
 	for (size_t i = 0; i < scene_meshes.size(); i++) {
 		const Mesh* m = scene_meshes[i].get();
@@ -403,8 +430,10 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 
 		if (d_mesh_vertex_buffers[i]) cudaFree(d_mesh_vertex_buffers[i]);
 		if (d_mesh_index_buffers[i]) cudaFree(d_mesh_index_buffers[i]);
+		if (d_mesh_uv_buffers[i])    cudaFree(d_mesh_uv_buffers[i]);
 		d_mesh_vertex_buffers[i] = nullptr;
 		d_mesh_index_buffers[i] = nullptr;
+		d_mesh_uv_buffers[i] = nullptr;
 
 		if (vcount <= 0 || icount <= 0) {
 			d_mesh_vcounts[i] = 0;
@@ -412,21 +441,29 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 			continue;
 		}
 
-		// Pack positions and indices into flat host buffers. The device-side
-		// TriangleMesh only needs positions; normals/UVs live in the GL mesh.
+		// Pack positions, UVs, and indices into flat host buffers.
 		std::vector<glm::vec3> positions;
 		positions.reserve(vcount);
 		for (const auto& v : m->vertices) positions.push_back(v.position);
+
+		std::vector<glm::vec2> uvs;
+		uvs.reserve(vcount);
+		for (const auto& v : m->vertices) uvs.push_back(v.uv);
 
 		std::vector<int> int_indices;
 		int_indices.reserve(icount);
 		for (unsigned int u : m->indices) int_indices.push_back((int)u);
 
 		glm::vec3* d_verts = nullptr;
+		glm::vec2* d_uv = nullptr;
 		int* d_idx = nullptr;
 		check_cuda_errors(cudaMalloc(&d_verts, sizeof(glm::vec3) * vcount));
 		check_cuda_errors(cudaMemcpy(d_verts, positions.data(),
 		                             sizeof(glm::vec3) * vcount,
+		                             cudaMemcpyHostToDevice));
+		check_cuda_errors(cudaMalloc(&d_uv, sizeof(glm::vec2) * vcount));
+		check_cuda_errors(cudaMemcpy(d_uv, uvs.data(),
+		                             sizeof(glm::vec2) * vcount,
 		                             cudaMemcpyHostToDevice));
 		check_cuda_errors(cudaMalloc(&d_idx, sizeof(int) * icount));
 		check_cuda_errors(cudaMemcpy(d_idx, int_indices.data(),
@@ -434,6 +471,7 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 		                             cudaMemcpyHostToDevice));
 
 		d_mesh_vertex_buffers[i] = d_verts;
+		d_mesh_uv_buffers[i] = d_uv;
 		d_mesh_index_buffers[i] = d_idx;
 		d_mesh_vcounts[i] = vcount;
 		d_mesh_icounts[i] = icount;
@@ -473,6 +511,44 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 		d_mesh_tri_id_counts[i] = tri_id_count;
 	}
 
+	// ---- Texture pixel buffer upload -------------------------------------
+	const auto& scene_textures = scene.textures();
+
+	for (size_t i = scene_textures.size(); i < d_texture_pixel_buffers.size(); i++) {
+		if (d_texture_pixel_buffers[i]) cudaFree(d_texture_pixel_buffers[i]);
+	}
+	d_texture_pixel_buffers.resize(scene_textures.size(), nullptr);
+	d_texture_widths.resize(scene_textures.size(), 0);
+	d_texture_heights.resize(scene_textures.size(), 0);
+	d_texture_channels.resize(scene_textures.size(), 0);
+
+	for (size_t i = 0; i < scene_textures.size(); i++) {
+		const GLTexture* tex = scene_textures[i].get();
+		if (!tex->raw_pixels()) continue;
+
+		int w  = tex->width();
+		int h  = tex->height();
+		int ch = tex->channels();
+
+		// Skip re-upload when size matches cached version.
+		if (d_texture_pixel_buffers[i] &&
+		    d_texture_widths[i] == w && d_texture_heights[i] == h &&
+		    d_texture_channels[i] == ch) {
+			continue;
+		}
+		if (d_texture_pixel_buffers[i]) cudaFree(d_texture_pixel_buffers[i]);
+
+		size_t byte_count = (size_t)w * h * ch;
+		unsigned char* d_pix = nullptr;
+		check_cuda_errors(cudaMalloc(&d_pix, byte_count));
+		check_cuda_errors(cudaMemcpy(d_pix, tex->raw_pixels(), byte_count,
+		                             cudaMemcpyHostToDevice));
+		d_texture_pixel_buffers[i] = d_pix;
+		d_texture_widths[i]  = w;
+		d_texture_heights[i] = h;
+		d_texture_channels[i] = ch;
+	}
+
 	// ---- Build host-side descriptor vector -------------------------------
 	const auto& scene_objects = scene.objects();
 	std::vector<DeviceObjectDesc> descs;
@@ -492,6 +568,9 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 		d.ior = o.ior;
 		d.emission = o.emission;
 		d.is_light = o.is_light ? 1 : 0;
+		d.use_checker    = o.use_checker ? 1 : 0;
+		d.checker_color1 = o.checker_color1;
+		d.checker_color2 = o.checker_color2;
 
 		switch (o.kind) {
 			case ProxyKind::Sphere:
@@ -511,6 +590,12 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 				d.rect_u = o.scale * o.u;
 				d.rect_v = o.scale * o.v;
 				break;
+			case ProxyKind::Disc:
+				d.kind = DeviceObjectKind::Disc;
+				d.disc_center = o.center + o.position;
+				d.disc_normal = o.disc_normal;
+				d.disc_radius = o.radius * o.scale;
+				break;
 			case ProxyKind::Mesh: {
 				if (o.mesh_index < 0 || o.mesh_index >= (int)scene_meshes.size()) {
 					continue;
@@ -521,6 +606,7 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 				}
 				d.kind = DeviceObjectKind::Mesh;
 				d.d_mesh_vertices = d_mesh_vertex_buffers[o.mesh_index];
+				d.d_mesh_uvs      = d_mesh_uv_buffers[o.mesh_index];
 				d.d_mesh_indices  = d_mesh_index_buffers[o.mesh_index];
 				d.mesh_vcount     = d_mesh_vcounts[o.mesh_index];
 				d.mesh_icount     = d_mesh_icounts[o.mesh_index];
@@ -533,6 +619,19 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 				d.mesh_bvh_node_count     = d_mesh_bvh_node_counts[o.mesh_index];
 				d.d_mesh_reordered_tri_ids = d_mesh_tri_id_buffers[o.mesh_index];
 				d.mesh_tri_id_count        = d_mesh_tri_id_counts[o.mesh_index];
+				// Image texture
+				if (o.texture_index >= 0 &&
+				    o.texture_index < (int)d_texture_pixel_buffers.size() &&
+				    d_texture_pixel_buffers[o.texture_index]) {
+					d.d_texture_pixels = d_texture_pixel_buffers[o.texture_index];
+					d.tex_width        = d_texture_widths[o.texture_index];
+					d.tex_height       = d_texture_heights[o.texture_index];
+					d.tex_channels     = d_texture_channels[o.texture_index];
+					d.has_texture      = 1;
+				} else {
+					d.d_texture_pixels = nullptr;
+					d.has_texture      = 0;
+				}
 				break;
 			}
 		}

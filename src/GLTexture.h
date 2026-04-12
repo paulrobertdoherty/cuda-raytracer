@@ -22,11 +22,18 @@ public:
 	void bind(unsigned int unit) const;
 
 	GLuint id() const { return _id; }
-	int width() const { return _width; }
+	int width()  const { return _width; }
 	int height() const { return _height; }
+	int channels() const { return _channels; }
+
+	// Raw pixel data retained after GL upload for CUDA use. Non-null only
+	// after a successful load(). Owned by this object; freed in destructor.
+	const unsigned char* raw_pixels() const { return _pixels; }
 
 private:
-	GLuint _id = 0;
-	int _width = 0;
-	int _height = 0;
+	GLuint         _id       = 0;
+	int            _width    = 0;
+	int            _height   = 0;
+	int            _channels = 0;
+	unsigned char* _pixels   = nullptr;
 };
