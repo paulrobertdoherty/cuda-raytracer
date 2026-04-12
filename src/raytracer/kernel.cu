@@ -26,6 +26,7 @@
 #include "raytracer/kernel.h"
 #include "Scene.h"
 #include "Mesh.h"
+#include "MeshBVHBuilder.h"
 
 #include <vector>
 
@@ -160,7 +161,9 @@ __global__ void build_world_from_desc(thrust::device_ptr<World*> d_world,
 				                     d.d_mesh_indices, d.mesh_icount,
 				                     d.mesh_translate, d.mesh_scale,
 				                     mat,
-				                     d.mesh_aabb_min, d.mesh_aabb_max);
+				                     d.mesh_aabb_min, d.mesh_aabb_max,
+				                     d.d_mesh_bvh_nodes, d.mesh_bvh_node_count,
+				                     d.d_mesh_reordered_tri_ids, d.mesh_tri_id_count);
 				break;
 		}
 
@@ -337,10 +340,20 @@ KernelInfo::~KernelInfo() {
 	for (int* p : d_mesh_index_buffers) {
 		if (p) cudaFree(p);
 	}
+	for (MeshBVHNode* p : d_mesh_bvh_buffers) {
+		if (p) cudaFree(p);
+	}
+	for (int* p : d_mesh_tri_id_buffers) {
+		if (p) cudaFree(p);
+	}
 	d_mesh_vertex_buffers.clear();
 	d_mesh_index_buffers.clear();
 	d_mesh_vcounts.clear();
 	d_mesh_icounts.clear();
+	d_mesh_bvh_buffers.clear();
+	d_mesh_bvh_node_counts.clear();
+	d_mesh_tri_id_buffers.clear();
+	d_mesh_tri_id_counts.clear();
 
 	delete frame_buffer;
 }
@@ -364,10 +377,18 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 		if (d_mesh_vertex_buffers[i]) cudaFree(d_mesh_vertex_buffers[i]);
 		if (d_mesh_index_buffers[i]) cudaFree(d_mesh_index_buffers[i]);
 	}
+	for (size_t i = scene_meshes.size(); i < d_mesh_bvh_buffers.size(); i++) {
+		if (d_mesh_bvh_buffers[i]) cudaFree(d_mesh_bvh_buffers[i]);
+		if (d_mesh_tri_id_buffers[i]) cudaFree(d_mesh_tri_id_buffers[i]);
+	}
 	d_mesh_vertex_buffers.resize(scene_meshes.size(), nullptr);
 	d_mesh_index_buffers.resize(scene_meshes.size(), nullptr);
 	d_mesh_vcounts.resize(scene_meshes.size(), 0);
 	d_mesh_icounts.resize(scene_meshes.size(), 0);
+	d_mesh_bvh_buffers.resize(scene_meshes.size(), nullptr);
+	d_mesh_bvh_node_counts.resize(scene_meshes.size(), 0);
+	d_mesh_tri_id_buffers.resize(scene_meshes.size(), nullptr);
+	d_mesh_tri_id_counts.resize(scene_meshes.size(), 0);
 
 	for (size_t i = 0; i < scene_meshes.size(); i++) {
 		const Mesh* m = scene_meshes[i].get();
@@ -416,6 +437,40 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 		d_mesh_index_buffers[i] = d_idx;
 		d_mesh_vcounts[i] = vcount;
 		d_mesh_icounts[i] = icount;
+
+		// Build per-mesh BVH on the host and upload the flat node array
+		// plus the reordered triangle-ID array to the device.
+		if (d_mesh_bvh_buffers[i]) cudaFree(d_mesh_bvh_buffers[i]);
+		if (d_mesh_tri_id_buffers[i]) cudaFree(d_mesh_tri_id_buffers[i]);
+		d_mesh_bvh_buffers[i] = nullptr;
+		d_mesh_tri_id_buffers[i] = nullptr;
+
+		int tri_count = icount / 3;
+		MeshBVHBuildResult bvh = build_mesh_bvh(
+			positions.data(), m->indices.data(), tri_count);
+
+		int bvh_node_count = (int)bvh.nodes.size();
+		int tri_id_count   = (int)bvh.reordered_tri_ids.size();
+
+		if (bvh_node_count > 0) {
+			MeshBVHNode* d_bvh = nullptr;
+			check_cuda_errors(cudaMalloc(&d_bvh, sizeof(MeshBVHNode) * bvh_node_count));
+			check_cuda_errors(cudaMemcpy(d_bvh, bvh.nodes.data(),
+			                             sizeof(MeshBVHNode) * bvh_node_count,
+			                             cudaMemcpyHostToDevice));
+			d_mesh_bvh_buffers[i] = d_bvh;
+		}
+		d_mesh_bvh_node_counts[i] = bvh_node_count;
+
+		if (tri_id_count > 0) {
+			int* d_tri_ids = nullptr;
+			check_cuda_errors(cudaMalloc(&d_tri_ids, sizeof(int) * tri_id_count));
+			check_cuda_errors(cudaMemcpy(d_tri_ids, bvh.reordered_tri_ids.data(),
+			                             sizeof(int) * tri_id_count,
+			                             cudaMemcpyHostToDevice));
+			d_mesh_tri_id_buffers[i] = d_tri_ids;
+		}
+		d_mesh_tri_id_counts[i] = tri_id_count;
 	}
 
 	// ---- Build host-side descriptor vector -------------------------------
@@ -474,6 +529,10 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 				const Mesh* m = scene_meshes[o.mesh_index].get();
 				d.mesh_aabb_min = o.position + o.scale * m->local_min;
 				d.mesh_aabb_max = o.position + o.scale * m->local_max;
+				d.d_mesh_bvh_nodes        = d_mesh_bvh_buffers[o.mesh_index];
+				d.mesh_bvh_node_count     = d_mesh_bvh_node_counts[o.mesh_index];
+				d.d_mesh_reordered_tri_ids = d_mesh_tri_id_buffers[o.mesh_index];
+				d.mesh_tri_id_count        = d_mesh_tri_id_counts[o.mesh_index];
 				break;
 			}
 		}

@@ -11,6 +11,7 @@
 #include <vector>
 
 class Scene;
+struct MeshBVHNode;
 
 // Default tile size for progressive tiled rendering (RENDER_FINAL mode)
 constexpr int DEFAULT_TILE_SIZE = 64;
@@ -67,6 +68,12 @@ struct DeviceObjectDesc {
     float mesh_scale;
     glm::vec3 mesh_aabb_min;
     glm::vec3 mesh_aabb_max;
+
+    // Mesh BVH: device pointers owned by KernelInfo
+    MeshBVHNode* d_mesh_bvh_nodes;
+    int          mesh_bvh_node_count;
+    int*         d_mesh_reordered_tri_ids;
+    int          mesh_tri_id_count;
 };
 
 struct KernelInfo {
@@ -91,6 +98,12 @@ struct KernelInfo {
     std::vector<int*> d_mesh_index_buffers;
     std::vector<int> d_mesh_vcounts;
     std::vector<int> d_mesh_icounts;
+
+    // Per-mesh BVH node buffers (device pointers, one per scene mesh).
+    std::vector<MeshBVHNode*> d_mesh_bvh_buffers;
+    std::vector<int>          d_mesh_bvh_node_counts;
+    std::vector<int*>         d_mesh_tri_id_buffers;
+    std::vector<int>          d_mesh_tri_id_counts;
 
     KernelInfo() {}
     ~KernelInfo();
