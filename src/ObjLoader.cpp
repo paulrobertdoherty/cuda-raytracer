@@ -7,6 +7,7 @@
 
 #include <iostream>
 #include <unordered_map>
+#include <algorithm>
 
 namespace ObjLoader {
 
@@ -39,9 +40,18 @@ std::unique_ptr<Mesh> load(const std::string& path) {
 	std::string warn;
 	std::string err;
 
+	// Extract the directory from the OBJ path so tinyobj can find the .mtl file
+	std::string mtl_basedir;
+	auto last_slash = path.find_last_of("/\\");
+	if (last_slash != std::string::npos) {
+		mtl_basedir = path.substr(0, last_slash + 1);
+	}
+
 	// triangulate=true, default_vcols_fallback=false
 	bool ok = tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err,
-	                            path.c_str(), nullptr, true);
+	                            path.c_str(),
+	                            mtl_basedir.empty() ? nullptr : mtl_basedir.c_str(),
+	                            true);
 	if (!warn.empty()) {
 		std::cerr << "[ObjLoader] " << warn << std::endl;
 	}
