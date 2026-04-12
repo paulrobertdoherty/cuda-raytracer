@@ -1,27 +1,97 @@
 #pragma once
 
 #include <glm/glm.hpp>
+
+#include <memory>
+#include <string>
 #include <vector>
+
+class Mesh;
+class GLTexture;
 
 enum class ProxyKind {
 	Sphere,
 	Triangle,
-	Rect
+	Rect,
+	Mesh
 };
 
-struct ProxyPrimitive {
+// Material descriptors kept host-side so we can drive the CUDA world rebuild.
+// Scope is intentionally narrow: the same four cases that create_world used.
+enum class SceneMaterial {
+	Lambertian,
+	Metal,
+	Dielectric,
+	Emissive
+};
+
+// Single scene object. The union-ish geometry fields are interpreted based on
+// `kind`. Every object has a position offset and uniform scale on top of its
+// local geometry so click-and-drag can translate anything.
+struct SceneObject {
 	ProxyKind kind;
-	glm::vec3 color;
+	glm::vec3 color = glm::vec3(1.0f); // rasterizer uColor fallback
+	glm::vec3 position = glm::vec3(0.0f); // world-space translation applied on top of local geometry
+	float scale = 1.0f;
 
-	// Sphere: center + radius
-	glm::vec3 center;
-	float radius;
+	// Material for the CUDA raytracer.
+	SceneMaterial material = SceneMaterial::Lambertian;
+	glm::vec3 albedo = glm::vec3(0.8f);
+	float fuzz = 0.0f;
+	float ior = 1.5f;
+	glm::vec3 emission = glm::vec3(0.0f);
+	bool is_light = false;
 
-	// Triangle: v0, v1, v2
-	glm::vec3 v0, v1, v2;
+	// Sphere: center + radius (center is the local center, position is added on top)
+	glm::vec3 center = glm::vec3(0.0f);
+	float radius = 1.0f;
+
+	// Triangle: three local vertices
+	glm::vec3 v0 = glm::vec3(0.0f), v1 = glm::vec3(0.0f), v2 = glm::vec3(0.0f);
 
 	// Rect: corner Q + edge vectors u, v
-	glm::vec3 Q, u, v;
+	glm::vec3 Q = glm::vec3(0.0f), u = glm::vec3(0.0f), v = glm::vec3(0.0f);
+
+	// Mesh: index into Scene's mesh / texture lists. -1 if not applicable.
+	int mesh_index = -1;
+	int texture_index = -1;
 };
 
-std::vector<ProxyPrimitive> build_host_scene();
+class Scene {
+public:
+	Scene();
+	~Scene();
+
+	// Scene owns meshes and textures — forward-declared to keep the header
+	// lightweight. Non-copyable.
+	Scene(const Scene&) = delete;
+	Scene& operator=(const Scene&) = delete;
+
+	// Load an .obj file (and optional diffuse texture), append a mesh
+	// SceneObject at the given position and uniform scale. Returns the index
+	// of the new object in `objects` (or -1 on failure).
+	int add_obj_from_file(const std::string& obj_path,
+	                       const std::string& texture_path,
+	                       const glm::vec3& position,
+	                       float scale);
+
+	// Ray / scene intersection used for mouse picking. Tests every object in
+	// world space (honoring SceneObject::position and scale). Returns true if
+	// any primitive was hit; fills `out_t`, `out_idx`, and `out_point`.
+	bool ray_intersect(const glm::vec3& ray_origin,
+	                   const glm::vec3& ray_dir,
+	                   float& out_t,
+	                   int& out_idx,
+	                   glm::vec3& out_point) const;
+
+	// Access to the owned resources.
+	const std::vector<SceneObject>& objects() const { return _objects; }
+	std::vector<SceneObject>& mutable_objects() { return _objects; }
+	const std::vector<std::unique_ptr<Mesh>>& meshes() const { return _meshes; }
+	const std::vector<std::unique_ptr<GLTexture>>& textures() const { return _textures; }
+
+private:
+	std::vector<SceneObject> _objects;
+	std::vector<std::unique_ptr<Mesh>> _meshes;
+	std::vector<std::unique_ptr<GLTexture>> _textures;
+};

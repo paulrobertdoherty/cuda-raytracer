@@ -1,13 +1,20 @@
 #include "Rasterizer.h"
 
+#include "Mesh.h"
+#include "GLTexture.h"
+
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
 #include <cmath>
 
-Rasterizer::Rasterizer() {
-	_shader = std::make_unique<Shader>("./shaders/rasterize.vert", "./shaders/rasterize.frag");
-	_scene = build_host_scene();
+Rasterizer::Rasterizer(ShaderManager& shaders, const Scene& scene)
+	: _shaders(shaders), _scene(scene) {
+
+	_flat_shader = _shaders.get_or_load("flat",
+		"./shaders/rasterize.vert", "./shaders/rasterize.frag");
+	_mesh_shader = _shaders.get_or_load("mesh_textured",
+		"./shaders/mesh.vert", "./shaders/mesh.frag");
 
 	build_sphere_mesh(20, 14);
 
@@ -108,35 +115,44 @@ void Rasterizer::render(const CameraInfo& cam, float aspect) {
 	glEnable(GL_DEPTH_TEST);
 	glDepthFunc(GL_LESS);
 
-	_shader->use();
-	GLint loc_model = glGetUniformLocation(_shader->ID, "uModel");
-	GLint loc_view = glGetUniformLocation(_shader->ID, "uView");
-	GLint loc_proj = glGetUniformLocation(_shader->ID, "uProj");
-	GLint loc_color = glGetUniformLocation(_shader->ID, "uColor");
-
-	glUniformMatrix4fv(loc_view, 1, GL_FALSE, glm::value_ptr(view));
-	glUniformMatrix4fv(loc_proj, 1, GL_FALSE, glm::value_ptr(proj));
+	// --- Flat-shaded pass: spheres, triangles, rects ---
+	_flat_shader->use();
+	GLint flat_model = glGetUniformLocation(_flat_shader->ID, "uModel");
+	GLint flat_view  = glGetUniformLocation(_flat_shader->ID, "uView");
+	GLint flat_proj  = glGetUniformLocation(_flat_shader->ID, "uProj");
+	GLint flat_color = glGetUniformLocation(_flat_shader->ID, "uColor");
+	glUniformMatrix4fv(flat_view, 1, GL_FALSE, glm::value_ptr(view));
+	glUniformMatrix4fv(flat_proj, 1, GL_FALSE, glm::value_ptr(proj));
 
 	// Draw spheres.
 	glBindVertexArray(_sphere_vao);
-	for (const auto& p : _scene) {
+	const auto& objs = _scene.objects();
+	for (int i = 0; i < (int)objs.size(); i++) {
+		const SceneObject& p = objs[i];
 		if (p.kind != ProxyKind::Sphere) continue;
 		glm::mat4 model(1.0f);
-		model = glm::translate(model, p.center);
-		model = glm::scale(model, glm::vec3(p.radius));
-		glUniformMatrix4fv(loc_model, 1, GL_FALSE, glm::value_ptr(model));
-		glUniform3fv(loc_color, 1, glm::value_ptr(p.color));
+		model = glm::translate(model, p.center + p.position);
+		model = glm::scale(model, glm::vec3(p.radius * p.scale));
+		glUniformMatrix4fv(flat_model, 1, GL_FALSE, glm::value_ptr(model));
+		glm::vec3 color = p.color * (i == _selected_idx ? 1.5f : 1.0f);
+		glUniform3fv(flat_color, 1, glm::value_ptr(color));
 		glDrawElements(GL_TRIANGLES, _sphere_index_count, GL_UNSIGNED_INT, 0);
 	}
 
-	// Draw triangles + rects with identity model. Each primitive uses its own
-	// uColor uniform, so we issue one draw call per primitive (cheap — there
-	// are only a handful of these in the scene).
-	glm::mat4 identity(1.0f);
-	glUniformMatrix4fv(loc_model, 1, GL_FALSE, glm::value_ptr(identity));
+	// Draw triangles + rects. Each primitive uses its own uColor uniform so
+	// we issue one draw call per primitive (cheap — there are only a handful
+	// of these in the default scene).
 	glBindVertexArray(_tri_vao);
 	glBindBuffer(GL_ARRAY_BUFFER, _tri_vbo);
-	for (const auto& p : _scene) {
+	for (int i = 0; i < (int)objs.size(); i++) {
+		const SceneObject& p = objs[i];
+		glm::mat4 model(1.0f);
+		model = glm::translate(model, p.position);
+		model = glm::scale(model, glm::vec3(p.scale));
+		glUniformMatrix4fv(flat_model, 1, GL_FALSE, glm::value_ptr(model));
+		glm::vec3 color = p.color * (i == _selected_idx ? 1.5f : 1.0f);
+		glUniform3fv(flat_color, 1, glm::value_ptr(color));
+
 		if (p.kind == ProxyKind::Triangle) {
 			float verts[9] = {
 				p.v0.x, p.v0.y, p.v0.z,
@@ -144,7 +160,6 @@ void Rasterizer::render(const CameraInfo& cam, float aspect) {
 				p.v2.x, p.v2.y, p.v2.z,
 			};
 			glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_DYNAMIC_DRAW);
-			glUniform3fv(loc_color, 1, glm::value_ptr(p.color));
 			glDrawArrays(GL_TRIANGLES, 0, 3);
 		} else if (p.kind == ProxyKind::Rect) {
 			glm::vec3 a = p.Q;
@@ -160,12 +175,59 @@ void Rasterizer::render(const CameraInfo& cam, float aspect) {
 				d.x, d.y, d.z,
 			};
 			glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_DYNAMIC_DRAW);
-			glUniform3fv(loc_color, 1, glm::value_ptr(p.color));
 			glDrawArrays(GL_TRIANGLES, 0, 6);
 		}
 	}
 
 	glBindVertexArray(0);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+	// --- Textured mesh pass ---
+	const auto& meshes = _scene.meshes();
+	const auto& textures = _scene.textures();
+	bool have_mesh = false;
+	for (const auto& p : objs) {
+		if (p.kind == ProxyKind::Mesh) { have_mesh = true; break; }
+	}
+	if (have_mesh && _mesh_shader) {
+		_mesh_shader->use();
+		GLint mesh_model = glGetUniformLocation(_mesh_shader->ID, "uModel");
+		GLint mesh_view  = glGetUniformLocation(_mesh_shader->ID, "uView");
+		GLint mesh_proj  = glGetUniformLocation(_mesh_shader->ID, "uProj");
+		GLint mesh_color = glGetUniformLocation(_mesh_shader->ID, "uColor");
+		GLint mesh_hastex = glGetUniformLocation(_mesh_shader->ID, "uHasTexture");
+		GLint mesh_diffuse = glGetUniformLocation(_mesh_shader->ID, "uDiffuse");
+		GLint mesh_light_dir = glGetUniformLocation(_mesh_shader->ID, "uLightDir");
+		glUniformMatrix4fv(mesh_view, 1, GL_FALSE, glm::value_ptr(view));
+		glUniformMatrix4fv(mesh_proj, 1, GL_FALSE, glm::value_ptr(proj));
+		glUniform1i(mesh_diffuse, 0);
+		// Light follows the camera (headlight).
+		glm::vec3 light_dir = glm::normalize(forward);
+		glUniform3fv(mesh_light_dir, 1, glm::value_ptr(light_dir));
+
+		for (int i = 0; i < (int)objs.size(); i++) {
+			const SceneObject& p = objs[i];
+			if (p.kind != ProxyKind::Mesh) continue;
+			if (p.mesh_index < 0 || p.mesh_index >= (int)meshes.size()) continue;
+
+			glm::mat4 model(1.0f);
+			model = glm::translate(model, p.position);
+			model = glm::scale(model, glm::vec3(p.scale));
+			glUniformMatrix4fv(mesh_model, 1, GL_FALSE, glm::value_ptr(model));
+
+			glm::vec3 color = p.color * (i == _selected_idx ? 1.5f : 1.0f);
+			glUniform3fv(mesh_color, 1, glm::value_ptr(color));
+
+			if (p.texture_index >= 0 && p.texture_index < (int)textures.size()) {
+				glUniform1i(mesh_hastex, 1);
+				textures[p.texture_index]->bind(0);
+			} else {
+				glUniform1i(mesh_hastex, 0);
+			}
+
+			meshes[p.mesh_index]->draw();
+		}
+	}
+
 	glDisable(GL_DEPTH_TEST);
 }

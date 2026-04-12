@@ -70,6 +70,23 @@ public:
         glDeleteShader(fragment);
 
     }
+    // Release the program when the shader is destroyed so ShaderManager's
+    // unique_ptr<Shader> tears down GL resources cleanly.
+    ~Shader()
+    {
+        if (ID != 0) {
+            glDeleteProgram(ID);
+            ID = 0;
+        }
+    }
+
+    // Non-copyable, non-movable: the GL program ID is a non-owning handle and
+    // we must not double-delete it.
+    Shader(const Shader&) = delete;
+    Shader& operator=(const Shader&) = delete;
+    Shader(Shader&&) = delete;
+    Shader& operator=(Shader&&) = delete;
+
     // activate the shader
     // ------------------------------------------------------------------------
     void use() const

@@ -82,6 +82,7 @@ include_directories(
 	"${CMAKE_SOURCE_DIR}/include"
 	"${CMAKE_SOURCE_DIR}/include/glad"
 	"${CMAKE_SOURCE_DIR}/include/glm"
+	"${CMAKE_SOURCE_DIR}/thirdparty"
 )
 
 # Prevent Windows min/max/small macros from conflicting with C++ standard library

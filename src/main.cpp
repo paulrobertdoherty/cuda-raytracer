@@ -28,6 +28,8 @@ void print_usage(const char* program_name) {
 		<< "  --fov <float>      Camera field of view in degrees (default: 90.0)\n"
 		<< "  --tile-size <int>  Tile size for progressive rendering (default: 64)\n"
 		<< "  --preview-scale <int>  Pixelation factor used while moving the camera in preview (default: 1)\n"
+		<< "  --obj <path>       Load a wavefront .obj mesh into the scene\n"
+		<< "  --texture <path>   Diffuse texture (PNG/JPG/TGA) for the loaded mesh\n"
 		<< "  --help             Show this help message\n";
 }
 
@@ -40,6 +42,8 @@ int main(int argc, char* argv[])
 	float fov = 90.0f;
 	int tile_size = DEFAULT_TILE_SIZE;
 	int preview_scale = 1;
+	std::string obj_path;
+	std::string texture_path;
 
 	for (int i = 1; i < argc; i++) {
 		std::string arg = argv[i];
@@ -62,6 +66,10 @@ int main(int argc, char* argv[])
 		} else if (arg == "--preview-scale" && i + 1 < argc) {
 			preview_scale = std::atoi(argv[++i]);
 			if (preview_scale < 1) preview_scale = 1;
+		} else if (arg == "--obj" && i + 1 < argc) {
+			obj_path = argv[++i];
+		} else if (arg == "--texture" && i + 1 < argc) {
+			texture_path = argv[++i];
 		} else {
 			std::cerr << "Unknown option: " << arg << "\n";
 			print_usage(argv[0]);
@@ -69,7 +77,8 @@ int main(int argc, char* argv[])
 		}
 	}
 
-	Window window(width, height, samples, max_depth, fov, tile_size, preview_scale);
+	Window window(width, height, samples, max_depth, fov, tile_size, preview_scale,
+		obj_path, texture_path);
 
 	return window.init();
 }

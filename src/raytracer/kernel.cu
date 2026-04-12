@@ -15,6 +15,7 @@
 #include "Sphere.h"
 #include "Rectangle.h"
 #include "Triangle.h"
+#include "TriangleMesh.h"
 #include "World.h"
 #include "Camera.h"
 #include "BVHNode.h"
@@ -23,6 +24,10 @@
 #include <thrust/device_free.h>
 
 #include "raytracer/kernel.h"
+#include "Scene.h"
+#include "Mesh.h"
+
+#include <vector>
 
 __global__ void raytrace(FrameBuffer fb, thrust::device_ptr<World*> world, thrust::device_ptr<Camera*> d_camera, thrust::device_ptr<RandState> rand_state, int samples, int tile_offset_x, int tile_offset_y) {
 
@@ -91,49 +96,81 @@ __global__ void raytrace_pixelated(FrameBuffer fb, thrust::device_ptr<World*> wo
 	}
 }
 
+// Creates an empty world + the device-side camera. The actual scene contents
+// are populated via build_world_from_desc, driven by the host-side Scene in
+// KernelInfo::rebuild_world. Keeping this minimal makes the Scene the single
+// source of truth for what the ray tracer renders.
 __global__ void create_world(thrust::device_ptr<World*> d_world, thrust::device_ptr<Camera*> d_camera, CameraInfo camera_info) {
 	if (threadIdx.x == 0 && blockIdx.x == 0) {
 		*d_world = new World();
-		World* device_world = *d_world;
-
-		device_world->add(new Sphere(glm::vec3(0, 0, -1), 0.5f, new Lambertian(glm::vec3(0.8f, 0.3f, 0.3f))));
-		//device_world->add(new Sphere(glm::vec3(0, -100.5, -1), 100.0f, new Lambertian(glm::vec3(0.8f, 0.8f, 0.0f))));
-		device_world->add(new Sphere(glm::vec3(-1.01, 0, -1), 0.5f, new Dielectric(1.5f)));
-		device_world->add(new Sphere(glm::vec3(-1, 10, -1), 0.5f, new Dielectric(1.5f)));
-		device_world->add(new Sphere(glm::vec3(1, 0, -1), 0.5f, new Metal(glm::vec3(0.8f, 0.8f, 0.8f), 0.3f)));
-
-		device_world->add(new Sphere(glm::vec3(0, -1000.5, 0), 1000.0f,
-			new Lambertian(
-				new CheckerTexture(
-					glm::vec3(0.2f, 0.3f, 0.1f),
-					glm::vec3(0.9f)
-				)
-			)
-		));
-
-		// Emissive sphere light
-		Sphere* light_sphere = new Sphere(glm::vec3(0, 3, -1), 1.0f, new Emissive(glm::vec3(4.0f, 4.0f, 4.0f)));
-		device_world->add(light_sphere);
-		device_world->add_light(light_sphere);
-
-		// Emissive area light rectangle
-		Rect* light_rect = new Rect(
-			glm::vec3(-1, 3, -2), glm::vec3(2, 0, 0), glm::vec3(0, 0, 2),
-			new Emissive(glm::vec3(4.0f, 4.0f, 4.0f)));
-		device_world->add(light_rect);
-		device_world->add_light(light_rect);
-
-		// Blue triangle
-		device_world->add(new Triangle(
-			glm::vec3(-2, 0, -2), glm::vec3(-1, 2, -2), glm::vec3(0, 0, -2),
-			new Lambertian(glm::vec3(0.1f, 0.2f, 0.8f))));
-
-		curandState rand_state;
-		curand_init(1984, 0, 0, &rand_state);
-		device_world->build_bvh(&rand_state);
-
 		*d_camera = camera_info.construct_camera();
 	}
+}
+
+// Rebuilds the device-side World from a POD descriptor array. Deletes the
+// previous World (cascading through the BVH or the raw object array) and
+// replaces it with a fresh one populated per-descriptor. Mesh vertex/index
+// buffers are NOT freed here — they are owned by KernelInfo and outlive
+// individual rebuilds.
+__global__ void build_world_from_desc(thrust::device_ptr<World*> d_world,
+                                      DeviceObjectDesc* descs, int count) {
+	if (threadIdx.x != 0 || blockIdx.x != 0) return;
+
+	// Tear down the previous world (BVH + hittables + their materials).
+	if (*d_world) {
+		delete *d_world;
+	}
+
+	// Over-allocate capacity to leave room for a few post-hoc additions.
+	World* world = new World(count + 8);
+	*d_world = world;
+
+	for (int i = 0; i < count; i++) {
+		const DeviceObjectDesc& d = descs[i];
+
+		Material* mat = nullptr;
+		switch (d.material) {
+			case DeviceMaterialKind::Lambertian:
+				mat = new Lambertian(d.albedo);
+				break;
+			case DeviceMaterialKind::Metal:
+				mat = new Metal(d.albedo, d.fuzz);
+				break;
+			case DeviceMaterialKind::Dielectric:
+				mat = new Dielectric(d.ior);
+				break;
+			case DeviceMaterialKind::Emissive:
+				mat = new Emissive(d.emission);
+				break;
+		}
+
+		Hittable* h = nullptr;
+		switch (d.kind) {
+			case DeviceObjectKind::Sphere:
+				h = new Sphere(d.center, d.radius, mat);
+				break;
+			case DeviceObjectKind::Triangle:
+				h = new Triangle(d.v0, d.v1, d.v2, mat);
+				break;
+			case DeviceObjectKind::Rect:
+				h = new Rect(d.rect_Q, d.rect_u, d.rect_v, mat);
+				break;
+			case DeviceObjectKind::Mesh:
+				h = new TriangleMesh(d.d_mesh_vertices, d.mesh_vcount,
+				                     d.d_mesh_indices, d.mesh_icount,
+				                     d.mesh_translate, d.mesh_scale,
+				                     mat,
+				                     d.mesh_aabb_min, d.mesh_aabb_max);
+				break;
+		}
+
+		world->add(h);
+		if (d.is_light) world->add_light(h);
+	}
+
+	curandState rand_state;
+	curand_init(1984, 0, 0, &rand_state);
+	world->build_bvh(&rand_state);
 }
 
 __global__ void render_init(int width, int height, thrust::device_ptr<RandState> rand_state) {
@@ -285,10 +322,180 @@ KernelInfo::~KernelInfo() {
 	check_cuda_errors(cudaDeviceSynchronize());
 
 	free_scene<<<1, 1>>> (d_world, d_camera);
+	check_cuda_errors(cudaDeviceSynchronize());
 
 	thrust::device_free(d_world);
 	thrust::device_free(d_camera);
 	thrust::device_free(d_rand_state);
 
+	// Release any cached mesh vertex/index buffers. These are owned by
+	// KernelInfo (not by the device-side TriangleMesh Hittables) so we
+	// free them after the world has been torn down.
+	for (glm::vec3* p : d_mesh_vertex_buffers) {
+		if (p) cudaFree(p);
+	}
+	for (int* p : d_mesh_index_buffers) {
+		if (p) cudaFree(p);
+	}
+	d_mesh_vertex_buffers.clear();
+	d_mesh_index_buffers.clear();
+	d_mesh_vcounts.clear();
+	d_mesh_icounts.clear();
+
 	delete frame_buffer;
+}
+
+void KernelInfo::rebuild_world(const Scene& scene) {
+	// Any in-flight kernels must finish before we delete their world.
+	check_cuda_errors(cudaDeviceSynchronize());
+
+	// ---- Mesh buffer lifetime management ---------------------------------
+	// KernelInfo owns a device-side vertex/index buffer per scene mesh,
+	// indexed by mesh_index. A rebuild only re-uploads a slot when its
+	// vertex/index count doesn't match the cached version (i.e., a new or
+	// resized mesh). Dragging a mesh only mutates position/scale, which lives
+	// in the descriptor, so the cached buffers are reused across drags.
+	const auto& scene_meshes = scene.meshes();
+
+	// Free any stale slots beyond the current mesh count (e.g., a mesh was
+	// removed between rebuilds — not exercised yet but keeps the vectors
+	// honest).
+	for (size_t i = scene_meshes.size(); i < d_mesh_vertex_buffers.size(); i++) {
+		if (d_mesh_vertex_buffers[i]) cudaFree(d_mesh_vertex_buffers[i]);
+		if (d_mesh_index_buffers[i]) cudaFree(d_mesh_index_buffers[i]);
+	}
+	d_mesh_vertex_buffers.resize(scene_meshes.size(), nullptr);
+	d_mesh_index_buffers.resize(scene_meshes.size(), nullptr);
+	d_mesh_vcounts.resize(scene_meshes.size(), 0);
+	d_mesh_icounts.resize(scene_meshes.size(), 0);
+
+	for (size_t i = 0; i < scene_meshes.size(); i++) {
+		const Mesh* m = scene_meshes[i].get();
+		int vcount = (int)m->vertices.size();
+		int icount = (int)m->indices.size();
+
+		// Skip re-upload when the cache already holds this mesh.
+		if (d_mesh_vertex_buffers[i] && d_mesh_vcounts[i] == vcount &&
+		    d_mesh_icounts[i] == icount) {
+			continue;
+		}
+
+		if (d_mesh_vertex_buffers[i]) cudaFree(d_mesh_vertex_buffers[i]);
+		if (d_mesh_index_buffers[i]) cudaFree(d_mesh_index_buffers[i]);
+		d_mesh_vertex_buffers[i] = nullptr;
+		d_mesh_index_buffers[i] = nullptr;
+
+		if (vcount <= 0 || icount <= 0) {
+			d_mesh_vcounts[i] = 0;
+			d_mesh_icounts[i] = 0;
+			continue;
+		}
+
+		// Pack positions and indices into flat host buffers. The device-side
+		// TriangleMesh only needs positions; normals/UVs live in the GL mesh.
+		std::vector<glm::vec3> positions;
+		positions.reserve(vcount);
+		for (const auto& v : m->vertices) positions.push_back(v.position);
+
+		std::vector<int> int_indices;
+		int_indices.reserve(icount);
+		for (unsigned int u : m->indices) int_indices.push_back((int)u);
+
+		glm::vec3* d_verts = nullptr;
+		int* d_idx = nullptr;
+		check_cuda_errors(cudaMalloc(&d_verts, sizeof(glm::vec3) * vcount));
+		check_cuda_errors(cudaMemcpy(d_verts, positions.data(),
+		                             sizeof(glm::vec3) * vcount,
+		                             cudaMemcpyHostToDevice));
+		check_cuda_errors(cudaMalloc(&d_idx, sizeof(int) * icount));
+		check_cuda_errors(cudaMemcpy(d_idx, int_indices.data(),
+		                             sizeof(int) * icount,
+		                             cudaMemcpyHostToDevice));
+
+		d_mesh_vertex_buffers[i] = d_verts;
+		d_mesh_index_buffers[i] = d_idx;
+		d_mesh_vcounts[i] = vcount;
+		d_mesh_icounts[i] = icount;
+	}
+
+	// ---- Build host-side descriptor vector -------------------------------
+	const auto& scene_objects = scene.objects();
+	std::vector<DeviceObjectDesc> descs;
+	descs.reserve(scene_objects.size());
+
+	for (const SceneObject& o : scene_objects) {
+		DeviceObjectDesc d = {};
+
+		switch (o.material) {
+			case SceneMaterial::Lambertian: d.material = DeviceMaterialKind::Lambertian; break;
+			case SceneMaterial::Metal:      d.material = DeviceMaterialKind::Metal; break;
+			case SceneMaterial::Dielectric: d.material = DeviceMaterialKind::Dielectric; break;
+			case SceneMaterial::Emissive:   d.material = DeviceMaterialKind::Emissive; break;
+		}
+		d.albedo = o.albedo;
+		d.fuzz = o.fuzz;
+		d.ior = o.ior;
+		d.emission = o.emission;
+		d.is_light = o.is_light ? 1 : 0;
+
+		switch (o.kind) {
+			case ProxyKind::Sphere:
+				d.kind = DeviceObjectKind::Sphere;
+				d.center = o.center + o.position;
+				d.radius = o.radius * o.scale;
+				break;
+			case ProxyKind::Triangle:
+				d.kind = DeviceObjectKind::Triangle;
+				d.v0 = o.position + o.scale * o.v0;
+				d.v1 = o.position + o.scale * o.v1;
+				d.v2 = o.position + o.scale * o.v2;
+				break;
+			case ProxyKind::Rect:
+				d.kind = DeviceObjectKind::Rect;
+				d.rect_Q = o.position + o.scale * o.Q;
+				d.rect_u = o.scale * o.u;
+				d.rect_v = o.scale * o.v;
+				break;
+			case ProxyKind::Mesh: {
+				if (o.mesh_index < 0 || o.mesh_index >= (int)scene_meshes.size()) {
+					continue;
+				}
+				if (!d_mesh_vertex_buffers[o.mesh_index] ||
+				    !d_mesh_index_buffers[o.mesh_index]) {
+					continue;
+				}
+				d.kind = DeviceObjectKind::Mesh;
+				d.d_mesh_vertices = d_mesh_vertex_buffers[o.mesh_index];
+				d.d_mesh_indices  = d_mesh_index_buffers[o.mesh_index];
+				d.mesh_vcount     = d_mesh_vcounts[o.mesh_index];
+				d.mesh_icount     = d_mesh_icounts[o.mesh_index];
+				d.mesh_translate  = o.position;
+				d.mesh_scale      = o.scale;
+				const Mesh* m = scene_meshes[o.mesh_index].get();
+				d.mesh_aabb_min = o.position + o.scale * m->local_min;
+				d.mesh_aabb_max = o.position + o.scale * m->local_max;
+				break;
+			}
+		}
+
+		descs.push_back(d);
+	}
+
+	// ---- Upload descriptors and launch the device-side rebuild -----------
+	int count = (int)descs.size();
+	DeviceObjectDesc* d_descs = nullptr;
+	if (count > 0) {
+		check_cuda_errors(cudaMalloc(&d_descs, sizeof(DeviceObjectDesc) * count));
+		check_cuda_errors(cudaMemcpy(d_descs, descs.data(),
+		                             sizeof(DeviceObjectDesc) * count,
+		                             cudaMemcpyHostToDevice));
+	}
+
+	build_world_from_desc<<<1, 1>>>(d_world, d_descs, count);
+	check_cuda_errors(cudaGetLastError());
+	check_cuda_errors(cudaDeviceSynchronize());
+
+	if (d_descs) {
+		check_cuda_errors(cudaFree(d_descs));
+	}
 }

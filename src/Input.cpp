@@ -5,11 +5,13 @@
 #include <glm/glm.hpp>
 
 #include "Input.h"
+#include "Scene.h"
+#include "Picker.h"
 
 
 #define M_PI 3.14159265358979323846264338327950288f
 
-#define isPressed(x) glfwGetKey(window,x)==GLFW_PRESS 
+#define isPressed(x) glfwGetKey(window,x)==GLFW_PRESS
 
 void Input::process_quit(GLFWwindow* window)
 {
@@ -124,4 +126,69 @@ void Input::process_camera_movement(GLFWwindow* window, KernelInfo& kernelInfo, 
 	kernelInfo.camera_info.origin = position;
 
 	kernelInfo.set_camera(position, forward, up);
+}
+
+void Input::on_mouse_button(int button, int action, int mods) {
+	if (button == GLFW_MOUSE_BUTTON_LEFT) {
+		lmb_down = (action == GLFW_PRESS);
+	}
+}
+
+void Input::process_edit_mouse(GLFWwindow* window,
+                               Scene& scene,
+                               const CameraInfo& cam,
+                               int window_w, int window_h) {
+	double xpos, ypos;
+	glfwGetCursorPos(window, &xpos, &ypos);
+
+	bool pressed_this_frame = lmb_down && !lmb_was_down;
+	bool released_this_frame = !lmb_down && lmb_was_down;
+
+	if (pressed_this_frame) {
+		glm::vec3 ro, rd;
+		Picker::cursor_to_ray(cam, xpos, ypos, window_w, window_h, ro, rd);
+
+		float t;
+		int idx;
+		glm::vec3 hit_point;
+		if (scene.ray_intersect(ro, rd, t, idx, hit_point)) {
+			selected_idx = idx;
+			drag_anchor = hit_point;
+
+			// Drag plane: parallel to the screen, passing through the hit
+			// point. Camera looks in -forward (see Camera.h), so pick the
+			// forward vector from Picker and use it directly as the plane
+			// normal (points toward the camera when negated).
+			glm::vec3 forward, up;
+			Picker::compute_basis(cam, forward, up);
+			drag_plane_normal = forward;
+		} else {
+			selected_idx = -1;
+		}
+	}
+
+	if (lmb_down && selected_idx >= 0) {
+		glm::vec3 ro, rd;
+		Picker::cursor_to_ray(cam, xpos, ypos, window_w, window_h, ro, rd);
+		glm::vec3 new_point;
+		if (Picker::intersect_plane(ro, rd, drag_anchor, drag_plane_normal, new_point)) {
+			glm::vec3 delta = new_point - drag_anchor;
+			if (glm::dot(delta, delta) > 0.0f) {
+				scene.mutable_objects()[selected_idx].position += delta;
+				drag_anchor = new_point;
+				scene_dirty = true;
+			}
+		}
+	}
+
+	if (released_this_frame) {
+		// Keep the selected_idx until the next press so the outline persists
+		// briefly; the caller uses scene_dirty to decide when to rebuild the
+		// CUDA world.
+		selected_idx = -1;
+	}
+
+	lmb_was_down = lmb_down;
+	last_xpos = xpos;
+	last_ypos = ypos;
 }

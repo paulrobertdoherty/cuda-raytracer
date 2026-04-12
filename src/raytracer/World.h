@@ -35,7 +35,7 @@ public:
     __device__ World(int capacity) {
         objects = new Hittable*[capacity];
         number_of_objects = 0;
-        capacity = capacity;
+        this->capacity = capacity;
         bvh_root = nullptr;
         lights = new Hittable*[20];
         num_lights = 0;

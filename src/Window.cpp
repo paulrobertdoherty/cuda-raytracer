@@ -6,7 +6,7 @@
 
 #include "Rasterizer.h"
 
-Window::Window(unsigned int width, unsigned int height, int samples, int max_depth, float fov, int tile_size, int preview_scale) {
+Window::Window(unsigned int width, unsigned int height, int samples, int max_depth, float fov, int tile_size, int preview_scale, std::string obj_path, std::string texture_path) {
 	Window::width = width;
 	Window::height = height;
 	Window::samples = samples;
@@ -21,10 +21,18 @@ Window::Window(unsigned int width, unsigned int height, int samples, int max_dep
 	Window::_r_was_pressed = false;
 	Window::_rasterization_enabled = false;
 	Window::_raster_depth_rb = 0;
+	Window::_obj_path = std::move(obj_path);
+	Window::_texture_path = std::move(texture_path);
+	Window::_tab_was_pressed = false;
 }
 
 static void glfw_error_callback(int code, const char* description) {
 	std::cerr << "[GLFW error " << code << "] " << description << std::endl;
+}
+
+static void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
+	Window* w = reinterpret_cast<Window*>(glfwGetWindowUserPointer(window));
+	if (w) w->on_mouse_button(button, action, mods);
 }
 
 int Window::init_glfw() {
@@ -50,10 +58,15 @@ int Window::init_glfw() {
 	// Initialize and create window for GLFW
 	_window = glfwCreateWindow(Window::width, Window::height, "A CUDA ray tracer", NULL, NULL);
 
-	// Hides the cursor and captures it
+	// Hides the cursor and captures it (default fly mode).
 	glfwSetInputMode(_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
 	glfwSetWindowUserPointer(_window, reinterpret_cast<void*>(this));
+
+	// Install mouse button callback so edit-mode click-and-drag can pick
+	// objects. The callback forwards to Window::on_mouse_button which
+	// delegates to Input.
+	glfwSetMouseButtonCallback(_window, mouse_button_callback);
 
 	// Check if window was created
 	if (_window == NULL) {
@@ -65,6 +78,10 @@ int Window::init_glfw() {
 	glfwMakeContextCurrent(_window);
 
 	return 0;
+}
+
+void Window::on_mouse_button(int button, int action, int mods) {
+	_input.on_mouse_button(button, action, mods);
 }
 
 int Window::init_glad() {
@@ -115,16 +132,22 @@ int Window::init_framebuffer() {
 }
 
 int Window::init_quad() {
-	
+
+	// Pre-load the shaders needed for screen blit and motion-blur accumulation.
+	// The rasterization shaders ("flat" and "mesh_textured") are loaded on
+	// demand by the Rasterizer from the same ShaderManager.
+	_screen_shader = _shaders.load("screen",
+		"./shaders/rendertype_screen.vert", "./shaders/rendertype_screen.frag");
+	_accum_shader = _shaders.load("accumulate",
+		"./shaders/rendertype_accumulate.vert", "./shaders/rendertype_accumulate.frag");
+
 	_blit_quad = std::make_unique<Quad>(Window::width, Window::height);
 	_blit_quad->make_FBO();
 
-	_shader = std::make_unique<Shader>("./shaders/rendertype_screen.vert", "./shaders/rendertype_screen.frag");
 	_current_frame = std::make_unique<Quad>(Window::width, Window::height);
 	_current_frame->cuda_init(samples, max_depth, fov);
 	_current_frame->make_FBO();
 
-	_accum_shader = std::make_unique<Shader>("./shaders/rendertype_accumulate.vert", "./shaders/rendertype_accumulate.frag");
 	_accum_frame = std::make_unique<Quad>(Window::width, Window::height);
 	_accum_frame->make_FBO();
 
@@ -148,7 +171,19 @@ int Window::init_quad() {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-	_rasterizer = std::make_unique<Rasterizer>();
+	// Scene owns meshes/textures. Must be created after a GL context exists so
+	// GLTexture uploads work, and before the Rasterizer so the Rasterizer can
+	// bind it by reference.
+	_scene = std::make_unique<Scene>();
+	if (!_obj_path.empty()) {
+		_scene->add_obj_from_file(_obj_path, _texture_path, glm::vec3(0.0f, 0.5f, -1.0f), 0.5f);
+	}
+
+	_rasterizer = std::make_unique<Rasterizer>(_shaders, *_scene);
+
+	// Replace the hardcoded CUDA world with the Scene-derived one so the ray
+	// tracer renders exactly what the rasterizer previews.
+	_current_frame->_renderer->rebuild_world(*_scene);
 
 	return 0;
 }
@@ -210,11 +245,58 @@ void Window::tick_input(float t_diff) {
 	}
 	_r_was_pressed = r_down;
 
-	// Only process camera movement in preview mode
+	// Detect Tab key press (rising edge) — toggle edit mode.
+	bool tab_down = glfwGetKey(_window, GLFW_KEY_TAB) == GLFW_PRESS;
+	if (tab_down && !_tab_was_pressed && _render_mode == RenderMode::PREVIEW) {
+		_input.edit_mode = !_input.edit_mode;
+		if (_input.edit_mode) {
+			// Show cursor, freeze camera movement. Force rasterization on so
+			// the user sees object outlines while editing.
+			glfwSetInputMode(_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+			_rasterization_enabled = true;
+			_frame_count = 1;
+			// Clear any drag state from a previous edit session.
+			_input.lmb_was_down = false;
+			_input.selected_idx = -1;
+		} else {
+			// Back to fly mode: hide cursor, reseed the cursor delta tracker
+			// so we don't snap the camera on the first post-toggle frame.
+			glfwSetInputMode(_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+			double xpos, ypos;
+			glfwGetCursorPos(_window, &xpos, &ypos);
+			_input.last_xpos = xpos;
+			_input.last_ypos = ypos;
+			_rasterizer->set_selected(-1);
+		}
+	}
+	_tab_was_pressed = tab_down;
+
 	if (_render_mode == RenderMode::PREVIEW) {
-		_input.process_camera_movement(_window, *(_current_frame->_renderer), t_diff);
-		_camera_moving = _input.has_camera_moved();
-		if (_camera_moving) _frame_count = 1;
+		if (_input.edit_mode) {
+			int w = 0, h = 0;
+			glfwGetWindowSize(_window, &w, &h);
+			_input.process_edit_mouse(_window, *_scene,
+				_current_frame->_renderer->camera_info, w, h);
+
+			// Keep the rasterizer's highlight in sync with the active selection.
+			_rasterizer->set_selected(_input.selected_idx);
+
+			// While dragging, restart accumulation so the ray-traced preview
+			// stays sharp; on release, rebuild the CUDA world from the
+			// modified scene so the next ray-traced frame reflects the new
+			// layout.
+			if (_input.scene_dirty && !_input.lmb_down) {
+				_current_frame->_renderer->rebuild_world(*_scene);
+				_input.scene_dirty = false;
+				_frame_count = 1;
+			}
+			if (_input.lmb_down) _frame_count = 1;
+			_camera_moving = false;
+		} else {
+			_input.process_camera_movement(_window, *(_current_frame->_renderer), t_diff);
+			_camera_moving = _input.has_camera_moved();
+			if (_camera_moving) _frame_count = 1;
+		}
 	}
 }
 
@@ -298,7 +380,7 @@ void Window::tick_render() {
 				glBindFramebuffer(GL_FRAMEBUFFER, 0);
 				glDisable(GL_DEPTH_TEST);
 				glClear(GL_COLOR_BUFFER_BIT);
-				_shader->use();
+				_screen_shader->use();
 				glActiveTexture(GL_TEXTURE0);
 				glBindTexture(GL_TEXTURE_2D, _accum_frame->texture);
 				glBindVertexArray(_current_frame->VAO);
@@ -337,7 +419,7 @@ void Window::tick_render() {
 
 			glBindFramebuffer(GL_FRAMEBUFFER, _current_frame->framebuffer);
 			_current_frame->render_kernel(true, active_scale);
-			_shader->use();
+			_screen_shader->use();
 			glBindVertexArray(_current_frame->VAO);
 			glBindTexture(GL_TEXTURE_2D, _current_frame->texture);
 			glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -372,7 +454,7 @@ void Window::tick_render() {
 	// Render result to screen (always — in IDLE this redisplays the last frame)
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glViewport(0, 0, width, height);
-	_shader->use();
+	_screen_shader->use();
 	glActiveTexture(GL_TEXTURE0 + 0);
 	glBindTexture(GL_TEXTURE_2D, _accum_frame->texture);
 	glBindVertexArray(_current_frame->VAO);
