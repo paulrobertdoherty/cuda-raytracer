@@ -112,17 +112,22 @@ int Scene::add_obj_from_file(const std::string& obj_path,
 		return -1;
 	}
 	mesh->upload();
+	std::string actual_tex_path = texture_path;
+	if (actual_tex_path.empty() && !mesh->default_diffuse_tex.empty()) {
+		actual_tex_path = mesh->default_diffuse_tex;
+	}
+
 	int mesh_idx = (int)_meshes.size();
 	_meshes.push_back(std::move(mesh));
 
 	int tex_idx = -1;
-	if (!texture_path.empty()) {
+	if (!actual_tex_path.empty()) {
 		auto tex = std::make_unique<GLTexture>();
-		if (tex->load(texture_path)) {
+		if (tex->load(actual_tex_path)) {
 			tex_idx = (int)_textures.size();
 			_textures.push_back(std::move(tex));
 		} else {
-			std::cerr << "[Scene] Failed to load texture: " << texture_path << std::endl;
+			std::cerr << "[Scene] Failed to load texture: " << actual_tex_path << std::endl;
 		}
 	}
 
@@ -138,6 +143,42 @@ int Scene::add_obj_from_file(const std::string& obj_path,
 
 	int idx = (int)_objects.size();
 	_objects.push_back(obj);
+
+	// Retrieve the newly added mesh's AABB
+	const Mesh* loaded_mesh = _meshes.back().get();
+	glm::vec3 world_min = obj.position + obj.scale * loaded_mesh->local_min;
+	glm::vec3 world_max = obj.position + obj.scale * loaded_mesh->local_max;
+
+	// Check for collisions with the metal sphere
+	float delta_y = 0.0f;
+	for (auto& scene_obj : _objects) {
+		if (scene_obj.kind == ProxyKind::Sphere && scene_obj.material == SceneMaterial::Metal) {
+			float r = scene_obj.radius * scene_obj.scale;
+			glm::vec3 c = scene_obj.center + scene_obj.position;
+			
+			// AABB vs Sphere collision detection
+			glm::vec3 closest_point = glm::clamp(c, world_min, world_max);
+			glm::vec3 diff = closest_point - c;
+			float dist2 = glm::dot(diff, diff);
+			
+			// If intersection occurs, move the sphere underneath the bounding box
+			if (dist2 < r * r) {
+				float new_y = world_min.y - r - scene_obj.center.y - 0.05f; // 0.05f padding
+				delta_y = new_y - scene_obj.position.y;
+				scene_obj.position.y = new_y;
+			}
+		}
+	}
+
+	// If the metal sphere was moved down, move the ground sphere down by the same amount
+	if (delta_y != 0.0f) {
+		for (auto& scene_obj : _objects) {
+			if (scene_obj.kind == ProxyKind::Sphere && scene_obj.radius == 1000.0f) {
+				scene_obj.position.y += delta_y;
+			}
+		}
+	}
+
 	return idx;
 }
 

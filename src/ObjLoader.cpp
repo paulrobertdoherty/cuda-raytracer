@@ -64,6 +64,18 @@ std::unique_ptr<Mesh> load(const std::string& path) {
 
 	auto mesh = std::make_unique<Mesh>();
 
+	if (!materials.empty()) {
+		if (!materials[0].diffuse_texname.empty()) {
+			mesh->default_diffuse_tex = mtl_basedir + materials[0].diffuse_texname;
+		}
+		if (!materials[0].bump_texname.empty()) {
+			mesh->default_normal_tex = mtl_basedir + materials[0].bump_texname;
+		}
+		if (!materials[0].specular_texname.empty()) {
+			mesh->default_specular_tex = mtl_basedir + materials[0].specular_texname;
+		}
+	}
+
 	std::unordered_map<VertexKey, unsigned int, VertexKeyHash> index_cache;
 
 	for (const auto& shape : shapes) {

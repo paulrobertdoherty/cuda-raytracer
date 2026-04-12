@@ -37,6 +37,10 @@ public:
 	glm::vec3 local_min = glm::vec3(0.0f);
 	glm::vec3 local_max = glm::vec3(0.0f);
 
+	std::string default_diffuse_tex;
+	std::string default_normal_tex;
+	std::string default_specular_tex;
+
 	// CPU-side copies retained for picking and CUDA upload.
 	std::vector<MeshVertex> vertices;
 	std::vector<unsigned int> indices;
