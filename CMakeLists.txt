@@ -65,6 +65,25 @@ message(STATUS "Found GLFW3 in ${GLFW3_INCLUDE_DIR}")
 # GLAD
 add_library(GLAD "thirdparty/glad.c")
 
+# Dear ImGui + ImGuiFileDialog
+add_library(IMGUI STATIC
+	thirdparty/imgui/imgui.cpp
+	thirdparty/imgui/imgui_draw.cpp
+	thirdparty/imgui/imgui_tables.cpp
+	thirdparty/imgui/imgui_widgets.cpp
+	thirdparty/imgui/backends/imgui_impl_glfw.cpp
+	thirdparty/imgui/backends/imgui_impl_opengl3.cpp
+	thirdparty/ImGuiFileDialog/ImGuiFileDialog.cpp
+)
+target_include_directories(IMGUI PUBLIC
+	"${CMAKE_SOURCE_DIR}/thirdparty/imgui"
+	"${CMAKE_SOURCE_DIR}/thirdparty/imgui/backends"
+	"${CMAKE_SOURCE_DIR}/thirdparty/ImGuiFileDialog"
+	"${CMAKE_SOURCE_DIR}/include"
+	"${CMAKE_SOURCE_DIR}/include/glad"
+)
+target_link_libraries(IMGUI ${GLFW3_LIBRARY} ${OPENGL_LIBRARY})
+
 # CUDA
 find_package(CUDAToolkit REQUIRED)
 include_directories("${CUDAToolkit_INCLUDE_DIRS}")
@@ -74,7 +93,7 @@ if(EXISTS "${CUDAToolkit_INCLUDE_DIRS}/cccl")
 endif()
 
 # Put all libraries into a variable
-set(LIBS ${GLFW3_LIBRARY} ${OPENGL_LIBRARY} GLAD ${CMAKE_DL_LIBS} CUDA::cudart CUDA::curand)
+set(LIBS ${GLFW3_LIBRARY} ${OPENGL_LIBRARY} GLAD IMGUI ${CMAKE_DL_LIBS} CUDA::cudart CUDA::curand)
 
 # Define the include DIRs
 include_directories(
@@ -83,6 +102,9 @@ include_directories(
 	"${CMAKE_SOURCE_DIR}/include/glad"
 	"${CMAKE_SOURCE_DIR}/include/glm"
 	"${CMAKE_SOURCE_DIR}/thirdparty"
+	"${CMAKE_SOURCE_DIR}/thirdparty/imgui"
+	"${CMAKE_SOURCE_DIR}/thirdparty/imgui/backends"
+	"${CMAKE_SOURCE_DIR}/thirdparty/ImGuiFileDialog"
 )
 
 # Prevent Windows min/max/small macros from conflicting with C++ standard library

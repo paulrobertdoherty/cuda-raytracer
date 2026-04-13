@@ -24,6 +24,7 @@ Window::Window(unsigned int width, unsigned int height, int samples, int max_dep
 	Window::_obj_path = std::move(obj_path);
 	Window::_texture_path = std::move(texture_path);
 	Window::_tab_was_pressed = false;
+	Window::_g_was_pressed = false;
 }
 
 static void glfw_error_callback(int code, const char* description) {
@@ -185,6 +186,9 @@ int Window::init_quad() {
 	// tracer renders exactly what the rasterizer previews.
 	_current_frame->_renderer->rebuild_world(*_scene);
 
+	// Initialize the ImGui-based GUI overlay.
+	_gui = std::make_unique<Gui>(_window);
+
 	return 0;
 }
 
@@ -205,7 +209,27 @@ int Window::init() {
 	return 0;
 }
 
+void Window::scene_modified() {
+	_current_frame->_renderer->rebuild_world(*_scene);
+	_frame_count = 1;
+}
+
+void Window::reset_accumulation() {
+	_frame_count = 1;
+}
+
+void Window::start_final_render() {
+	if (_render_mode == RenderMode::PREVIEW) {
+		_render_mode = RenderMode::RENDER_FINAL;
+		_frame_count = 1;
+		_rasterization_enabled = false;
+	}
+}
+
 void Window::destroy() {
+
+	// Shut down ImGui before destroying the GL context.
+	_gui.reset();
 
 	// Terminate CUDA allocated buffer
 	_current_frame->cuda_destroy();
@@ -219,9 +243,31 @@ void Window::tick_input(float t_diff) {
 
 	_input.process_quit(_window);
 
-	// Detect Enter key press (rising edge)
+	// G key: toggle GUI visibility (always processed, even when ImGui has focus)
+	bool g_down = glfwGetKey(_window, GLFW_KEY_G) == GLFW_PRESS;
+	if (g_down && !_g_was_pressed) {
+		_gui->toggle();
+		// When GUI becomes visible, show cursor so user can interact with it.
+		// When hidden, restore the previous cursor mode.
+		if (_gui->visible() || _input.edit_mode) {
+			glfwSetInputMode(_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+		} else {
+			glfwSetInputMode(_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+			double xpos, ypos;
+			glfwGetCursorPos(_window, &xpos, &ypos);
+			_input.last_xpos = xpos;
+			_input.last_ypos = ypos;
+		}
+	}
+	_g_was_pressed = g_down;
+
+	// When ImGui wants keyboard, skip game input handling (except quit and G toggle above)
+	bool imgui_kb = _gui->visible() && _gui->wants_keyboard();
+	bool imgui_mouse = _gui->visible() && _gui->wants_mouse();
+
+	// Detect Enter key press (rising edge) — skip when ImGui has keyboard
 	bool enter_down = glfwGetKey(_window, GLFW_KEY_ENTER) == GLFW_PRESS;
-	if (enter_down && !_enter_was_pressed) {
+	if (enter_down && !_enter_was_pressed && !imgui_kb) {
 		if (_render_mode == RenderMode::PREVIEW) {
 			_render_mode = RenderMode::RENDER_FINAL;
 			_frame_count = 1;
@@ -237,7 +283,7 @@ void Window::tick_input(float t_diff) {
 
 	// Detect R key press (rising edge) — toggle rasterization preview.
 	bool r_down = glfwGetKey(_window, GLFW_KEY_R) == GLFW_PRESS;
-	if (r_down && !_r_was_pressed && _render_mode == RenderMode::PREVIEW) {
+	if (r_down && !_r_was_pressed && _render_mode == RenderMode::PREVIEW && !imgui_kb) {
 		_rasterization_enabled = !_rasterization_enabled;
 		// Restart accumulation when toggling so the first ray-traced frame
 		// after switching back is treated as frame 1.
@@ -247,7 +293,7 @@ void Window::tick_input(float t_diff) {
 
 	// Detect Tab key press (rising edge) — toggle edit mode.
 	bool tab_down = glfwGetKey(_window, GLFW_KEY_TAB) == GLFW_PRESS;
-	if (tab_down && !_tab_was_pressed && _render_mode == RenderMode::PREVIEW) {
+	if (tab_down && !_tab_was_pressed && _render_mode == RenderMode::PREVIEW && !imgui_kb) {
 		_input.edit_mode = !_input.edit_mode;
 		if (_input.edit_mode) {
 			// Show cursor, freeze camera movement. Force rasterization on so
@@ -259,13 +305,16 @@ void Window::tick_input(float t_diff) {
 			_input.lmb_was_down = false;
 			_input.selected_idx = -1;
 		} else {
-			// Back to fly mode: hide cursor, reseed the cursor delta tracker
-			// so we don't snap the camera on the first post-toggle frame.
-			glfwSetInputMode(_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-			double xpos, ypos;
-			glfwGetCursorPos(_window, &xpos, &ypos);
-			_input.last_xpos = xpos;
-			_input.last_ypos = ypos;
+			// Back to fly mode. Only hide cursor if the GUI overlay is also
+			// hidden — if the GUI is visible the cursor must remain so the
+			// user can interact with the panels.
+			if (!_gui->visible()) {
+				glfwSetInputMode(_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+				double xpos, ypos;
+				glfwGetCursorPos(_window, &xpos, &ypos);
+				_input.last_xpos = xpos;
+				_input.last_ypos = ypos;
+			}
 			_rasterizer->set_selected(-1);
 		}
 	}
@@ -273,10 +322,15 @@ void Window::tick_input(float t_diff) {
 
 	if (_render_mode == RenderMode::PREVIEW) {
 		if (_input.edit_mode) {
-			int w = 0, h = 0;
-			glfwGetWindowSize(_window, &w, &h);
-			_input.process_edit_mouse(_window, *_scene,
-				_current_frame->_renderer->camera_info, w, h);
+			// Only forward mouse events to edit-mode picking when ImGui
+			// doesn't want the mouse (so clicking on a panel doesn't drag
+			// a scene object).
+			if (!imgui_mouse) {
+				int w = 0, h = 0;
+				glfwGetWindowSize(_window, &w, &h);
+				_input.process_edit_mouse(_window, *_scene,
+					_current_frame->_renderer->camera_info, w, h);
+			}
 
 			// Keep the rasterizer's highlight in sync with the active selection.
 			_rasterizer->set_selected(_input.selected_idx);
@@ -292,10 +346,16 @@ void Window::tick_input(float t_diff) {
 			}
 			if (_input.lmb_down) _frame_count = 1;
 			_camera_moving = false;
-		} else {
+		} else if (!_gui->visible()) {
+			// Camera fly mode — only when the GUI overlay is hidden so
+			// the cursor is captured and mouse-look makes sense.
 			_input.process_camera_movement(_window, *(_current_frame->_renderer), t_diff);
 			_camera_moving = _input.has_camera_moved();
 			if (_camera_moving) _frame_count = 1;
+		} else {
+			// GUI is visible but not in edit mode — show cursor for GUI
+			// interaction but don't process camera movement.
+			_camera_moving = false;
 		}
 	}
 }
@@ -460,9 +520,8 @@ void Window::tick_render() {
 	glBindVertexArray(_current_frame->VAO);
 	glDrawArrays(GL_TRIANGLES, 0, 6);
 
-	// Check and call events and swap buffers between frames
-	glfwSwapBuffers(_window);
-	glfwPollEvents();
+	// Note: glfwSwapBuffers / glfwPollEvents are called by tick() after
+	// the ImGui overlay is rendered on top.
 }
 
 void Window::tick() {
@@ -471,14 +530,27 @@ void Window::tick() {
 	float t_diff = (float) std::chrono::duration_cast<std::chrono::milliseconds>(this_frame - _last_frame).count();
 	_last_frame = this_frame;
 
-	// Print FPS
-	//std::cout << "\r" << std::fixed << std::setprecision(2) << 1000.0 / t_diff << " fps";
+	// Start a new ImGui frame (must come before tick_input so ImGui can
+	// report WantCaptureMouse / WantCaptureKeyboard).
+	_gui->new_frame();
 
 	// Input
 	tick_input(t_diff);
 
+	// Build the ImGui draw list (the actual GL draw happens after tick_render
+	// so the GUI overlays the rendered image).
+	_gui->draw(*this);
+
 	 // Render
 	tick_render();
+
+	// Draw the ImGui overlay on top of the final composited image (after
+	// the screen-space blit but before glfwSwapBuffers).
+	_gui->render();
+
+	// Check and call events and swap buffers between frames
+	glfwSwapBuffers(_window);
+	glfwPollEvents();
 
 	if (_render_mode != RenderMode::IDLE)
 		_frame_count++;

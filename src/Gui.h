@@ -1,0 +1,56 @@
+#pragma once
+
+#include <glad/glad.h>
+#include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
+
+#include <string>
+
+class Window;
+
+class Gui {
+public:
+    Gui(GLFWwindow* window);
+    ~Gui();
+
+    Gui(const Gui&) = delete;
+    Gui& operator=(const Gui&) = delete;
+
+    void new_frame();
+    void draw(Window& app);
+    void render();
+    bool wants_mouse() const;
+    bool wants_keyboard() const;
+    bool visible() const { return _visible; }
+    void toggle() { _visible = !_visible; }
+
+private:
+    bool _visible = true;
+
+    // State for "Add Object" panel
+    int _new_obj_type = 0;
+    int _new_obj_material = 0;
+    glm::vec3 _new_sphere_center = glm::vec3(0.0f, 0.0f, -2.0f);
+    float _new_sphere_radius = 0.3f;
+    glm::vec3 _new_obj_albedo = glm::vec3(0.8f);
+    float _new_obj_fuzz = 0.1f;
+    float _new_obj_ior = 1.5f;
+    glm::vec3 _new_obj_emission = glm::vec3(4.0f);
+
+    // Disc-specific state
+    glm::vec3 _new_disc_center = glm::vec3(0.0f, 2.0f, -1.0f);
+    glm::vec3 _new_disc_normal = glm::vec3(0.0f, -1.0f, 0.0f);
+    float _new_disc_radius = 0.5f;
+
+    // File dialog keys
+    std::string _pending_obj_path;
+    std::string _pending_diffuse_path;
+    std::string _pending_normal_path;
+    std::string _pending_specular_path;
+
+    void draw_render_params(Window& app);
+    void draw_scene_objects(Window& app);
+    void draw_add_object(Window& app);
+    void draw_file_loader(Window& app);
+    void draw_camera_info(Window& app);
+};

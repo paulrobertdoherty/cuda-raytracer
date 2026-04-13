@@ -12,6 +12,7 @@
 #include "Input.h"
 #include "Rasterizer.h"
 #include "Scene.h"
+#include "Gui.h"
 #include "raytracer/kernel.h"
 
 #include <string>
@@ -37,6 +38,18 @@ public:
 	// Called from GLFW callbacks (which only have a GLFWwindow*, so we look
 	// the Window up via glfwGetWindowUserPointer).
 	void on_mouse_button(int button, int action, int mods);
+
+	// Public accessors for the GUI to interact with
+	Scene& scene() { return *_scene; }
+	KernelInfo& renderer() { return *_current_frame->_renderer; }
+
+	// Rebuild the CUDA world from the scene and reset accumulation.
+	void scene_modified();
+	// Reset frame accumulation without rebuilding the world.
+	void reset_accumulation();
+	// Switch to RENDER_FINAL mode.
+	void start_final_render();
+
 private:
 	GLFWwindow* _window;
 
@@ -50,6 +63,7 @@ private:
 	GLuint _raster_depth_rb;
 	std::unique_ptr<Rasterizer> _rasterizer;
 	std::unique_ptr<Scene> _scene;
+	std::unique_ptr<Gui> _gui;
 	std::string _obj_path;
 	std::string _texture_path;
 
@@ -66,6 +80,7 @@ private:
 	bool _r_was_pressed;
 	bool _tab_was_pressed;
 	bool _rasterization_enabled;
+	bool _g_was_pressed;
 	std::chrono::steady_clock::time_point _last_frame;
 
 

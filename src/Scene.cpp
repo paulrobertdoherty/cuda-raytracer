@@ -102,10 +102,27 @@ Scene::Scene() {
 
 Scene::~Scene() = default;
 
+int Scene::add_sphere(const glm::vec3& center, float radius,
+                      SceneMaterial material, const glm::vec3& albedo,
+                      float fuzz, float ior,
+                      const glm::vec3& emission, bool is_light) {
+	SceneObject o = make_sphere(center, radius, albedo, material, albedo, fuzz, ior, is_light, emission);
+	int idx = (int)_objects.size();
+	_objects.push_back(o);
+	return idx;
+}
+
+void Scene::remove_object(int index) {
+	if (index < 0 || index >= (int)_objects.size()) return;
+	_objects.erase(_objects.begin() + index);
+}
+
 int Scene::add_obj_from_file(const std::string& obj_path,
-                              const std::string& texture_path,
+                              const std::string& diffuse_path,
                               const glm::vec3& position,
-                              float scale) {
+                              float scale,
+                              const std::string& normal_path,
+                              const std::string& specular_path) {
 	auto mesh = ObjLoader::load(obj_path);
 	if (!mesh) {
 		std::cerr << "[Scene] Failed to load .obj file: " << obj_path << std::endl;
@@ -117,7 +134,7 @@ int Scene::add_obj_from_file(const std::string& obj_path,
 
 	const Mesh* loaded_mesh_ptr = _meshes.back().get();
 
-	std::string actual_tex_path = texture_path;
+	std::string actual_tex_path = diffuse_path;
 	if (actual_tex_path.empty() && !loaded_mesh_ptr->default_diffuse_tex.empty()) {
 		actual_tex_path = loaded_mesh_ptr->default_diffuse_tex;
 	}
@@ -133,25 +150,35 @@ int Scene::add_obj_from_file(const std::string& obj_path,
 		}
 	}
 
+	std::string actual_normal_path = normal_path;
+	if (actual_normal_path.empty() && !loaded_mesh_ptr->default_normal_tex.empty()) {
+		actual_normal_path = loaded_mesh_ptr->default_normal_tex;
+	}
+
 	int normal_tex_idx = -1;
-	if (!loaded_mesh_ptr->default_normal_tex.empty()) {
+	if (!actual_normal_path.empty()) {
 		auto tex = std::make_unique<GLTexture>();
-		if (tex->load(loaded_mesh_ptr->default_normal_tex)) {
+		if (tex->load(actual_normal_path)) {
 			normal_tex_idx = (int)_textures.size();
 			_textures.push_back(std::move(tex));
 		} else {
-			std::cerr << "[Scene] Failed to load normal texture: " << loaded_mesh_ptr->default_normal_tex << std::endl;
+			std::cerr << "[Scene] Failed to load normal texture: " << actual_normal_path << std::endl;
 		}
 	}
 
+	std::string actual_specular_path = specular_path;
+	if (actual_specular_path.empty() && !loaded_mesh_ptr->default_specular_tex.empty()) {
+		actual_specular_path = loaded_mesh_ptr->default_specular_tex;
+	}
+
 	int specular_tex_idx = -1;
-	if (!loaded_mesh_ptr->default_specular_tex.empty()) {
+	if (!actual_specular_path.empty()) {
 		auto tex = std::make_unique<GLTexture>();
-		if (tex->load(loaded_mesh_ptr->default_specular_tex)) {
+		if (tex->load(actual_specular_path)) {
 			specular_tex_idx = (int)_textures.size();
 			_textures.push_back(std::move(tex));
 		} else {
-			std::cerr << "[Scene] Failed to load specular texture: " << loaded_mesh_ptr->default_specular_tex << std::endl;
+			std::cerr << "[Scene] Failed to load specular texture: " << actual_specular_path << std::endl;
 		}
 	}
 

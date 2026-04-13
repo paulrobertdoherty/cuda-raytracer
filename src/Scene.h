@@ -78,14 +78,6 @@ public:
 	Scene(const Scene&) = delete;
 	Scene& operator=(const Scene&) = delete;
 
-	// Load an .obj file (and optional diffuse texture), append a mesh
-	// SceneObject at the given position and uniform scale. Returns the index
-	// of the new object in `objects` (or -1 on failure).
-	int add_obj_from_file(const std::string& obj_path,
-	                       const std::string& texture_path,
-	                       const glm::vec3& position,
-	                       float scale);
-
 	// Ray / scene intersection used for mouse picking. Tests every object in
 	// world space (honoring SceneObject::position and scale). Returns true if
 	// any primitive was hit; fills `out_t`, `out_idx`, and `out_point`.
@@ -94,6 +86,25 @@ public:
 	                   float& out_t,
 	                   int& out_idx,
 	                   glm::vec3& out_point) const;
+
+	// Add a sphere to the scene. Returns the index of the new object.
+	int add_sphere(const glm::vec3& center, float radius,
+	               SceneMaterial material, const glm::vec3& albedo,
+	               float fuzz, float ior,
+	               const glm::vec3& emission, bool is_light);
+
+	// Remove an object by index. Invalidates indices of objects after it.
+	void remove_object(int index);
+
+	// Load an .obj file (and optional textures), append a mesh SceneObject at
+	// the given position and uniform scale. Texture paths may be empty to
+	// auto-discover from the .mtl file. Returns index of new object, or -1.
+	int add_obj_from_file(const std::string& obj_path,
+	                       const std::string& diffuse_path,
+	                       const glm::vec3& position,
+	                       float scale,
+	                       const std::string& normal_path = "",
+	                       const std::string& specular_path = "");
 
 	// Access to the owned resources.
 	const std::vector<SceneObject>& objects() const { return _objects; }
