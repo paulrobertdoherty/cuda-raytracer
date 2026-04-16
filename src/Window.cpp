@@ -9,12 +9,14 @@
 Window::Window(unsigned int width, unsigned int height, int samples, int max_depth, float fov, int tile_size, int preview_scale, std::string obj_path, std::string texture_path) {
 	Window::width = width;
 	Window::height = height;
+	Window::_window_width = width;
+	Window::_window_height = height;
 	Window::samples = samples;
 	Window::max_depth = max_depth;
 	Window::fov = fov;
 	Window::tile_size = tile_size;
 	Window::preview_scale = preview_scale < 1 ? 1 : preview_scale;
-	Window::_frame_count = 0;
+	Window::_frame_count = 1;
 	Window::_camera_moving = false;
 	Window::_render_mode = RenderMode::PREVIEW;
 	Window::_enter_was_pressed = false;
@@ -56,11 +58,15 @@ int Window::init_glfw() {
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
+	// Start maximized so the window fills the monitor.
+	glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);
+
 	// Initialize and create window for GLFW
 	_window = glfwCreateWindow(Window::width, Window::height, "A CUDA ray tracer", NULL, NULL);
 
-	// Hides the cursor and captures it (default fly mode).
-	glfwSetInputMode(_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+	// The GUI starts visible so the cursor must be shown. When the user
+	// hides the GUI (G key), the cursor will be captured for fly mode.
+	glfwSetInputMode(_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 
 	glfwSetWindowUserPointer(_window, reinterpret_cast<void*>(this));
 
@@ -97,6 +103,9 @@ int Window::init_glad() {
 }
 
 void Window::resize(unsigned int w, unsigned int h) {
+	if (w == this->width && h == this->height) return;
+	if (w == 0 || h == 0) return;
+
 	this->width = w;
 	this->height = h;
 	this->_current_frame->resize(w, h);
@@ -112,14 +121,34 @@ void Window::resize(unsigned int w, unsigned int h) {
 		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, _raster_depth_rb);
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	}
+
+	_frame_count = 1;
 }
 
-void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
-	// resize the frame buffer
-	glViewport(0, 0, width, height);
-	Window* myWindow = reinterpret_cast<Window*>(glfwGetWindowUserPointer(window));
+void Window::update_viewport() {
+	unsigned int render_w = _window_width;
+	int vp_x = 0;
 
-	myWindow->resize(width, height);
+	if (_gui && _gui->visible()) {
+		unsigned int pw = (unsigned int)_gui->panel_width();
+		if (pw >= _window_width) pw = _window_width / 2;
+		render_w = _window_width - pw;
+		vp_x = _gui->panel_on_right() ? 0 : (int)pw;
+	}
+
+	_viewport_x = vp_x;
+	resize(render_w, _window_height);
+}
+
+void framebuffer_size_callback(GLFWwindow* window, int w, int h) {
+	Window* myWindow = reinterpret_cast<Window*>(glfwGetWindowUserPointer(window));
+	myWindow->on_framebuffer_resize((unsigned int)w, (unsigned int)h);
+}
+
+void Window::on_framebuffer_resize(unsigned int w, unsigned int h) {
+	_window_width = w;
+	_window_height = h;
+	update_viewport();
 }
 
 int Window::init_framebuffer() {
@@ -141,6 +170,19 @@ int Window::init_quad() {
 		"./shaders/rendertype_screen.vert", "./shaders/rendertype_screen.frag");
 	_accum_shader = _shaders.load("accumulate",
 		"./shaders/rendertype_accumulate.vert", "./shaders/rendertype_accumulate.frag");
+
+	// Query the actual framebuffer size (may be larger than requested if
+	// the window was maximized by the window manager hint).
+	{
+		int fb_w = 0, fb_h = 0;
+		glfwGetFramebufferSize(_window, &fb_w, &fb_h);
+		_window_width = (unsigned int)fb_w;
+		_window_height = (unsigned int)fb_h;
+		// Initial render size = full window (GUI is created later and
+		// update_viewport is called after that).
+		width = _window_width;
+		height = _window_height;
+	}
 
 	_blit_quad = std::make_unique<Quad>(Window::width, Window::height);
 	_blit_quad->make_FBO();
@@ -188,6 +230,10 @@ int Window::init_quad() {
 
 	// Initialize the ImGui-based GUI overlay.
 	_gui = std::make_unique<Gui>(_window);
+
+	// Now that the GUI exists, recompute the render viewport to account
+	// for the sidebar panel (which starts visible).
+	update_viewport();
 
 	return 0;
 }
@@ -247,6 +293,8 @@ void Window::tick_input(float t_diff) {
 	bool g_down = glfwGetKey(_window, GLFW_KEY_G) == GLFW_PRESS;
 	if (g_down && !_g_was_pressed) {
 		_gui->toggle();
+		// Recompute the render viewport since the sidebar appeared/disappeared.
+		update_viewport();
 		// When GUI becomes visible, show cursor so user can interact with it.
 		// When hidden, restore the previous cursor mode.
 		if (_gui->visible() || _input.edit_mode) {
@@ -382,10 +430,11 @@ void copyFrameBufferTexture(int width, int height, int fboIn, int textureIn, int
 }
 
 void Window::tick_render() {
+	// Clear the entire window (including sidebar area) to dark grey.
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glViewport(0, 0, _window_width, _window_height);
 	glDisable(GL_DEPTH_TEST);
-
-	glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+	glClearColor(0.12f, 0.12f, 0.14f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	if (_render_mode == RenderMode::RENDER_FINAL) {
@@ -438,6 +487,7 @@ void Window::tick_render() {
 
 				// Display the progressively-updated _accum_frame to screen.
 				glBindFramebuffer(GL_FRAMEBUFFER, 0);
+				glViewport(_viewport_x, 0, width, height);
 				glDisable(GL_DEPTH_TEST);
 				glClear(GL_COLOR_BUFFER_BIT);
 				_screen_shader->use();
@@ -511,17 +561,17 @@ void Window::tick_render() {
 	}
 	// IDLE: no GPU work, just redisplay the last frame in _accum_frame
 
-	// Render result to screen (always — in IDLE this redisplays the last frame)
+	// Render result to the viewport sub-region of the screen.
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-	glViewport(0, 0, width, height);
+	glViewport(_viewport_x, 0, width, height);
 	_screen_shader->use();
 	glActiveTexture(GL_TEXTURE0 + 0);
 	glBindTexture(GL_TEXTURE_2D, _accum_frame->texture);
 	glBindVertexArray(_current_frame->VAO);
 	glDrawArrays(GL_TRIANGLES, 0, 6);
 
-	// Note: glfwSwapBuffers / glfwPollEvents are called by tick() after
-	// the ImGui overlay is rendered on top.
+	// Restore full-window viewport for the ImGui overlay pass that follows.
+	glViewport(0, 0, _window_width, _window_height);
 }
 
 void Window::tick() {

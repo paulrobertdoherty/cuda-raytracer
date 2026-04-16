@@ -24,8 +24,13 @@ public:
     bool visible() const { return _visible; }
     void toggle() { _visible = !_visible; }
 
+    int panel_width() const { return _panel_width; }
+    bool panel_on_right() const { return _panel_on_right; }
+
 private:
     bool _visible = true;
+    int _panel_width = 340;
+    bool _panel_on_right = true;
 
     // State for "Add Object" panel
     int _new_obj_type = 0;
@@ -53,4 +58,5 @@ private:
     void draw_add_object(Window& app);
     void draw_file_loader(Window& app);
     void draw_camera_info(Window& app);
+    void draw_file_dialogs(Window& app);
 };
