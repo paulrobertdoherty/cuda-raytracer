@@ -41,6 +41,8 @@ private:
     float _new_obj_fuzz = 0.1f;
     float _new_obj_ior = 1.5f;
     glm::vec3 _new_obj_emission = glm::vec3(4.0f);
+    float _new_obj_scatter_dist = 1.0f;
+    glm::vec3 _new_obj_extinction = glm::vec3(1.0f, 0.2f, 0.1f);
 
     // Disc-specific state
     glm::vec3 _new_disc_center = glm::vec3(0.0f, 2.0f, -1.0f);

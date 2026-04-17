@@ -34,7 +34,8 @@ enum class DeviceMaterialKind : int {
     Lambertian = 0,
     Metal = 1,
     Dielectric = 2,
-    Emissive = 3
+    Emissive = 3,
+    SubsurfaceScattering = 4
 };
 
 struct DeviceObjectDesc {
@@ -45,6 +46,10 @@ struct DeviceObjectDesc {
     float ior;
     glm::vec3 emission;
     int is_light; // 0/1
+
+    // Subsurface scattering (when material == SubsurfaceScattering)
+    float scattering_distance;
+    glm::vec3 extinction_coeff;
 
     // Sphere
     glm::vec3 center;

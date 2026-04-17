@@ -56,8 +56,8 @@ bool Gui::wants_keyboard() const {
 // Material helpers
 // ---------------------------------------------------------------------------
 
-static const char* material_names[] = { "Lambertian", "Metal", "Dielectric", "Emissive" };
-static const int material_count = 4;
+static const char* material_names[] = { "Lambertian", "Metal", "Dielectric", "Emissive", "Subsurface" };
+static const int material_count = 5;
 
 static SceneMaterial material_from_index(int idx) {
     switch (idx) {
@@ -65,16 +65,18 @@ static SceneMaterial material_from_index(int idx) {
         case 1: return SceneMaterial::Metal;
         case 2: return SceneMaterial::Dielectric;
         case 3: return SceneMaterial::Emissive;
+        case 4: return SceneMaterial::SubsurfaceScattering;
         default: return SceneMaterial::Lambertian;
     }
 }
 
 static int index_from_material(SceneMaterial mat) {
     switch (mat) {
-        case SceneMaterial::Lambertian: return 0;
-        case SceneMaterial::Metal:      return 1;
-        case SceneMaterial::Dielectric: return 2;
-        case SceneMaterial::Emissive:   return 3;
+        case SceneMaterial::Lambertian:           return 0;
+        case SceneMaterial::Metal:                return 1;
+        case SceneMaterial::Dielectric:           return 2;
+        case SceneMaterial::Emissive:             return 3;
+        case SceneMaterial::SubsurfaceScattering: return 4;
         default: return 0;
     }
 }
@@ -262,6 +264,21 @@ void Gui::draw_scene_objects(Window& app) {
                     changed = true;
                 }
             }
+            if (o.material == SceneMaterial::SubsurfaceScattering) {
+                float col[3] = { o.albedo.r, o.albedo.g, o.albedo.b };
+                if (ImGui::ColorEdit3("Albedo", col)) {
+                    o.albedo = glm::vec3(col[0], col[1], col[2]);
+                    o.color = o.albedo;
+                    changed = true;
+                }
+                changed |= ImGui::SliderFloat("IOR", &o.ior, 1.0f, 3.0f);
+                changed |= ImGui::SliderFloat("Scatter Dist", &o.scattering_distance, 0.01f, 10.0f);
+                float ext[3] = { o.extinction_coeff.r, o.extinction_coeff.g, o.extinction_coeff.b };
+                if (ImGui::DragFloat3("Extinction", ext, 0.05f, 0.0f, 20.0f)) {
+                    o.extinction_coeff = glm::vec3(ext[0], ext[1], ext[2]);
+                    changed = true;
+                }
+            }
 
             changed |= ImGui::Checkbox("Is Light", &o.is_light);
 
@@ -364,6 +381,18 @@ void Gui::draw_add_object(Window& app) {
             _new_obj_emission = glm::vec3(em[0], em[1], em[2]);
         }
     }
+    if (mat == SceneMaterial::SubsurfaceScattering) {
+        float col[3] = { _new_obj_albedo.r, _new_obj_albedo.g, _new_obj_albedo.b };
+        if (ImGui::ColorEdit3("Albedo##addsss", col)) {
+            _new_obj_albedo = glm::vec3(col[0], col[1], col[2]);
+        }
+        ImGui::SliderFloat("IOR##addsss", &_new_obj_ior, 1.0f, 3.0f);
+        ImGui::SliderFloat("Scatter Dist##addsss", &_new_obj_scatter_dist, 0.01f, 10.0f);
+        float ext[3] = { _new_obj_extinction.r, _new_obj_extinction.g, _new_obj_extinction.b };
+        if (ImGui::DragFloat3("Extinction##addsss", ext, 0.05f, 0.0f, 20.0f)) {
+            _new_obj_extinction = glm::vec3(ext[0], ext[1], ext[2]);
+        }
+    }
 
     ImGui::Separator();
 
@@ -376,9 +405,14 @@ void Gui::draw_add_object(Window& app) {
         if (ImGui::Button("Add Sphere")) {
             bool is_light = (mat == SceneMaterial::Emissive);
             glm::vec3 emission = is_light ? _new_obj_emission : glm::vec3(0.0f);
-            app.scene().add_sphere(_new_sphere_center, _new_sphere_radius,
-                                   mat, _new_obj_albedo, _new_obj_fuzz, _new_obj_ior,
-                                   emission, is_light);
+            int idx = app.scene().add_sphere(_new_sphere_center, _new_sphere_radius,
+                                             mat, _new_obj_albedo, _new_obj_fuzz, _new_obj_ior,
+                                             emission, is_light);
+            if (mat == SceneMaterial::SubsurfaceScattering && idx >= 0) {
+                SceneObject& o = app.scene().mutable_objects()[idx];
+                o.scattering_distance = _new_obj_scatter_dist;
+                o.extinction_coeff = _new_obj_extinction;
+            }
             app.scene_modified();
         }
     } else {
@@ -405,6 +439,8 @@ void Gui::draw_add_object(Window& app) {
             disc.is_light = (mat == SceneMaterial::Emissive);
             disc.emission = disc.is_light ? _new_obj_emission : glm::vec3(0.0f);
             disc.color = disc.is_light ? glm::vec3(1.0f) : disc.albedo;
+            disc.scattering_distance = _new_obj_scatter_dist;
+            disc.extinction_coeff = _new_obj_extinction;
             app.scene().mutable_objects().push_back(disc);
             app.scene_modified();
         }
