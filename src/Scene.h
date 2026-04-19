@@ -7,7 +7,14 @@
 #include <vector>
 
 class Mesh;
+
+#ifdef HEADLESS_BUILD
+class HeadlessTexture;
+using SceneTexture = HeadlessTexture;
+#else
 class GLTexture;
+using SceneTexture = GLTexture;
+#endif
 
 enum class ProxyKind {
 	Sphere,
@@ -110,10 +117,10 @@ public:
 	const std::vector<SceneObject>& objects() const { return _objects; }
 	std::vector<SceneObject>& mutable_objects() { return _objects; }
 	const std::vector<std::unique_ptr<Mesh>>& meshes() const { return _meshes; }
-	const std::vector<std::unique_ptr<GLTexture>>& textures() const { return _textures; }
+	const std::vector<std::unique_ptr<SceneTexture>>& textures() const { return _textures; }
 
 private:
 	std::vector<SceneObject> _objects;
 	std::vector<std::unique_ptr<Mesh>> _meshes;
-	std::vector<std::unique_ptr<GLTexture>> _textures;
+	std::vector<std::unique_ptr<SceneTexture>> _textures;
 };

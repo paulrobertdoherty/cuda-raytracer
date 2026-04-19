@@ -1,12 +1,20 @@
 
+#ifndef HEADLESS_BUILD
 #include "Window.h"
+#endif
 #include "raytracer/kernel.h"
+#include "Scene.h"
 
 #include <iostream>
 #include <string>
 #include <cstdlib>
 
-#if defined(__linux__)
+#ifdef HEADLESS_BUILD
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+#endif
+
+#if defined(__linux__) && !defined(HEADLESS_BUILD)
 // On hybrid-GPU laptops, force GLX/EGL to use the NVIDIA dGPU so that the
 // OpenGL context lives on the same device as CUDA. Without this, GLFW picks
 // the integrated GPU via Mesa and cudaGraphicsGLRegisterBuffer fails with
@@ -30,8 +38,21 @@ void print_usage(const char* program_name) {
 		<< "  --preview-scale <int>  Pixelation factor used while moving the camera in preview (default: 1)\n"
 		<< "  --obj <path>       Load a wavefront .obj mesh into the scene\n"
 		<< "  --texture <path>   Diffuse texture (PNG/JPG/TGA) for the loaded mesh\n"
+#ifdef HEADLESS_BUILD
+		<< "  --output <path>    Output PNG file path (required in headless mode)\n"
+		<< "  --camera-pos <x,y,z>   Camera position (default: 0,1,4)\n"
+		<< "  --camera-target <x,y,z> Camera look-at target (default: 0,0,0)\n"
+#endif
 		<< "  --help             Show this help message\n";
 }
+
+#ifdef HEADLESS_BUILD
+static glm::vec3 parse_vec3(const char* str) {
+	float x = 0, y = 0, z = 0;
+	sscanf(str, "%f,%f,%f", &x, &y, &z);
+	return glm::vec3(x, y, z);
+}
+#endif
 
 int main(int argc, char* argv[])
 {
@@ -44,6 +65,11 @@ int main(int argc, char* argv[])
 	int preview_scale = 1;
 	std::string obj_path;
 	std::string texture_path;
+#ifdef HEADLESS_BUILD
+	std::string output_path;
+	glm::vec3 camera_pos(0.0f, 1.0f, 4.0f);
+	glm::vec3 camera_target(0.0f, 0.0f, 0.0f);
+#endif
 
 	for (int i = 1; i < argc; i++) {
 		std::string arg = argv[i];
@@ -70,6 +96,14 @@ int main(int argc, char* argv[])
 			obj_path = argv[++i];
 		} else if (arg == "--texture" && i + 1 < argc) {
 			texture_path = argv[++i];
+#ifdef HEADLESS_BUILD
+		} else if (arg == "--output" && i + 1 < argc) {
+			output_path = argv[++i];
+		} else if (arg == "--camera-pos" && i + 1 < argc) {
+			camera_pos = parse_vec3(argv[++i]);
+		} else if (arg == "--camera-target" && i + 1 < argc) {
+			camera_target = parse_vec3(argv[++i]);
+#endif
 		} else {
 			std::cerr << "Unknown option: " << arg << "\n";
 			print_usage(argv[0]);
@@ -77,8 +111,57 @@ int main(int argc, char* argv[])
 		}
 	}
 
+#ifdef HEADLESS_BUILD
+	if (output_path.empty()) {
+		std::cerr << "Error: --output <path> is required in headless mode\n";
+		print_usage(argv[0]);
+		return 1;
+	}
+
+	std::cout << "Headless render: " << width << "x" << height
+	          << ", " << samples << " spp, depth " << max_depth << std::endl;
+
+	// Create the scene
+	Scene scene;
+	if (!obj_path.empty()) {
+		int idx = scene.add_obj_from_file(obj_path, texture_path,
+		                                   glm::vec3(0.0f, 0.5f, -1.0f), 0.5f);
+		if (idx < 0) {
+			std::cerr << "Failed to load OBJ: " << obj_path << std::endl;
+			return 1;
+		}
+	}
+
+	// Create headless renderer
+	KernelInfo renderer(width, height, samples, max_depth, fov);
+
+	// Set camera
+	glm::vec3 forward = glm::normalize(camera_target - camera_pos);
+	renderer.set_camera(camera_pos, forward, glm::vec3(0.0f, 1.0f, 0.0f));
+
+	// Build the CUDA world from the scene
+	renderer.rebuild_world(scene);
+
+	// Render
+	std::cout << "Rendering..." << std::endl;
+	std::vector<uint8_t> pixels;
+	renderer.render_to_buffer(pixels);
+
+	// Write PNG
+	int result = stbi_write_png(output_path.c_str(), width, height, 4,
+	                            pixels.data(), width * 4);
+	if (result) {
+		std::cout << "Saved: " << output_path << std::endl;
+	} else {
+		std::cerr << "Failed to write: " << output_path << std::endl;
+		return 1;
+	}
+
+	return 0;
+#else
 	Window window(width, height, samples, max_depth, fov, tile_size, preview_scale,
 		obj_path, texture_path);
 
 	return window.init();
+#endif
 }

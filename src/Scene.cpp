@@ -1,7 +1,11 @@
 #include "Scene.h"
 
 #include "Mesh.h"
+#ifdef HEADLESS_BUILD
+#include "HeadlessTexture.h"
+#else
 #include "GLTexture.h"
+#endif
 #include "ObjLoader.h"
 
 #include <iostream>
@@ -141,7 +145,7 @@ int Scene::add_obj_from_file(const std::string& obj_path,
 
 	int tex_idx = -1;
 	if (!actual_tex_path.empty()) {
-		auto tex = std::make_unique<GLTexture>();
+		auto tex = std::make_unique<SceneTexture>();
 		if (tex->load(actual_tex_path)) {
 			tex_idx = (int)_textures.size();
 			_textures.push_back(std::move(tex));
@@ -157,7 +161,7 @@ int Scene::add_obj_from_file(const std::string& obj_path,
 
 	int normal_tex_idx = -1;
 	if (!actual_normal_path.empty()) {
-		auto tex = std::make_unique<GLTexture>();
+		auto tex = std::make_unique<SceneTexture>();
 		if (tex->load(actual_normal_path)) {
 			normal_tex_idx = (int)_textures.size();
 			_textures.push_back(std::move(tex));
@@ -173,7 +177,7 @@ int Scene::add_obj_from_file(const std::string& obj_path,
 
 	int specular_tex_idx = -1;
 	if (!actual_specular_path.empty()) {
-		auto tex = std::make_unique<GLTexture>();
+		auto tex = std::make_unique<SceneTexture>();
 		if (tex->load(actual_specular_path)) {
 			specular_tex_idx = (int)_textures.size();
 			_textures.push_back(std::move(tex));

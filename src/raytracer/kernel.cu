@@ -8,7 +8,9 @@
 #include <glm/glm.hpp>
 #include <curand_kernel.h>
 
+#ifndef HEADLESS_BUILD
 #include "Window.h"
+#endif
 #include "cuda_errors.h"
 #include "FrameBuffer.h"
 #include "Ray.h"
@@ -27,7 +29,11 @@
 #include "raytracer/kernel.h"
 #include "Scene.h"
 #include "Mesh.h"
+#ifdef HEADLESS_BUILD
+#include "HeadlessTexture.h"
+#else
 #include "GLTexture.h"
+#endif
 #include "MeshBVHBuilder.h"
 
 #include <vector>
@@ -218,6 +224,8 @@ KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int sam
 	this->ny = ny;
 	this->samples = samples;
 	this->max_depth = max_depth;
+	this->headless = false;
+	this->d_headless_buffer = nullptr;
 
 	this->frame_buffer = new FrameBuffer(nx, ny, max_depth);
 
@@ -252,6 +260,87 @@ KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int sam
 	render_init<<<blocks, threads>>> (nx, ny, d_rand_state);
 	check_cuda_errors(cudaGetLastError());
 	check_cuda_errors(cudaDeviceSynchronize());
+}
+
+KernelInfo::KernelInfo(int nx, int ny, int samples, int max_depth, float fov) {
+	this->resources = {};
+	this->nx = nx;
+	this->ny = ny;
+	this->samples = samples;
+	this->max_depth = max_depth;
+	this->headless = true;
+	this->d_headless_buffer = nullptr;
+
+	this->frame_buffer = new FrameBuffer(nx, ny, max_depth);
+
+	camera_info = CameraInfo(glm::vec3(0.0f, 1.0f, 4.0f), glm::vec3(0.0f, 0.0f, 0.0f), fov, (float) nx, (float) ny);
+
+	d_camera = thrust::device_new<Camera*>();
+	d_rand_state = thrust::device_new<RandState>(nx * ny);
+	d_world = thrust::device_new<World*>();
+
+	size_t heap_size;
+	check_cuda_errors(cudaDeviceGetLimit(&heap_size, cudaLimitMallocHeapSize));
+	if (heap_size < 64 * 1024 * 1024) {
+		check_cuda_errors(cudaDeviceSetLimit(cudaLimitMallocHeapSize, 64 * 1024 * 1024));
+	}
+	check_cuda_errors(cudaDeviceSetLimit(cudaLimitStackSize, 8192));
+
+	// Allocate device-side pixel buffer (no OpenGL PBO in headless mode)
+	size_t buffer_bytes = (size_t)nx * ny * sizeof(uint32_t);
+	check_cuda_errors(cudaMalloc(&d_headless_buffer, buffer_bytes));
+	frame_buffer->device_ptr = d_headless_buffer;
+
+	create_world<<<1, 1>>> (d_world, d_camera, camera_info);
+	check_cuda_errors(cudaGetLastError());
+	check_cuda_errors(cudaDeviceSynchronize());
+
+	int tx = 8;
+	int ty = 8;
+	dim3 blocks(nx / tx + 1, ny / ty + 1);
+	dim3 threads(tx, ty);
+	render_init<<<blocks, threads>>> (nx, ny, d_rand_state);
+	check_cuda_errors(cudaGetLastError());
+	check_cuda_errors(cudaDeviceSynchronize());
+}
+
+void KernelInfo::render_to_buffer(std::vector<uint8_t>& output_rgba) {
+	// Point frame_buffer at headless device buffer
+	frame_buffer->device_ptr = d_headless_buffer;
+
+	int tx = 16;
+	int ty = 16;
+	dim3 blocks((nx + tx - 1) / tx, (ny + ty - 1) / ty);
+	dim3 threads(tx, ty);
+
+	raytrace<<<blocks, threads>>> (*frame_buffer, d_world, d_camera, d_rand_state, samples, 0, 0);
+	check_cuda_errors(cudaGetLastError());
+	check_cuda_errors(cudaDeviceSynchronize());
+
+	// Copy BGRA pixels from device to host
+	size_t pixel_count = (size_t)nx * ny;
+	std::vector<uint32_t> host_bgra(pixel_count);
+	check_cuda_errors(cudaMemcpy(host_bgra.data(), d_headless_buffer,
+	                             pixel_count * sizeof(uint32_t),
+	                             cudaMemcpyDeviceToHost));
+
+	// Convert BGRA → RGBA and flip vertically (OpenGL convention → image convention)
+	output_rgba.resize(pixel_count * 4);
+	for (int row = 0; row < ny; row++) {
+		int src_row = ny - 1 - row; // flip Y
+		for (int col = 0; col < nx; col++) {
+			uint32_t packed = host_bgra[src_row * nx + col];
+			uint8_t b = (packed >>  0) & 0xFF;
+			uint8_t g = (packed >>  8) & 0xFF;
+			uint8_t r = (packed >> 16) & 0xFF;
+			uint8_t a = (packed >> 24) & 0xFF;
+			size_t dst = ((size_t)row * nx + col) * 4;
+			output_rgba[dst + 0] = r;
+			output_rgba[dst + 1] = g;
+			output_rgba[dst + 2] = b;
+			output_rgba[dst + 3] = a;
+		}
+	}
 }
 
 void KernelInfo::resize(int nx, int ny) {
@@ -356,6 +445,11 @@ KernelInfo::~KernelInfo() {
 	thrust::device_free(d_world);
 	thrust::device_free(d_camera);
 	thrust::device_free(d_rand_state);
+
+	if (d_headless_buffer) {
+		cudaFree(d_headless_buffer);
+		d_headless_buffer = nullptr;
+	}
 
 	// Release any cached mesh vertex/index buffers. These are owned by
 	// KernelInfo (not by the device-side TriangleMesh Hittables) so we
@@ -557,7 +651,7 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 	d_texture_channels.resize(scene_textures.size(), 0);
 
 	for (size_t i = 0; i < scene_textures.size(); i++) {
-		const GLTexture* tex = scene_textures[i].get();
+		const SceneTexture* tex = scene_textures[i].get();
 		if (!tex->raw_pixels()) continue;
 
 		int w  = tex->width();

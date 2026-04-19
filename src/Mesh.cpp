@@ -3,14 +3,18 @@
 #include <algorithm>
 
 Mesh::~Mesh() {
+#ifndef HEADLESS_BUILD
 	if (_ebo) glDeleteBuffers(1, &_ebo);
 	if (_vbo) glDeleteBuffers(1, &_vbo);
 	if (_vao) glDeleteVertexArrays(1, &_vao);
+#endif
 }
 
 void Mesh::upload() {
 	if (vertices.empty() || indices.empty()) {
+#ifndef HEADLESS_BUILD
 		_index_count = 0;
+#endif
 		return;
 	}
 
@@ -22,6 +26,7 @@ void Mesh::upload() {
 		local_max = glm::max(local_max, v.position);
 	}
 
+#ifndef HEADLESS_BUILD
 	glGenVertexArrays(1, &_vao);
 	glGenBuffers(1, &_vbo);
 	glGenBuffers(1, &_ebo);
@@ -54,12 +59,15 @@ void Mesh::upload() {
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
-	_index_count = (GLsizei)indices.size();
+	_index_count = (int)indices.size();
+#endif
 }
 
 void Mesh::draw() const {
+#ifndef HEADLESS_BUILD
 	if (_index_count == 0) return;
 	glBindVertexArray(_vao);
 	glDrawElements(GL_TRIANGLES, _index_count, GL_UNSIGNED_INT, 0);
 	glBindVertexArray(0);
+#endif
 }

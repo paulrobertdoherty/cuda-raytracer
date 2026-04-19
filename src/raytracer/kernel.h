@@ -8,6 +8,7 @@
 
 #include <thrust/device_ptr.h>
 
+#include <cstdint>
 #include <vector>
 
 class Scene;
@@ -123,6 +124,10 @@ struct KernelInfo {
     int samples;
     int max_depth;
 
+    // Headless rendering support
+    bool headless = false;
+    uint32_t* d_headless_buffer = nullptr;
+
     // Device-side buffers owned by this KernelInfo, keyed by mesh index in
     // the Scene. Freed in the destructor. Kept in sync across rebuilds so
     // untouched meshes don't get re-uploaded.
@@ -152,6 +157,8 @@ struct KernelInfo {
     KernelInfo() {}
     ~KernelInfo();
     KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int samples, int max_depth, float fov);
+    // Headless constructor — no OpenGL, allocates its own device buffer
+    KernelInfo(int nx, int ny, int samples, int max_depth, float fov);
     void set_camera(glm::vec3 position, glm::vec3 forward, glm::vec3 up);
     void render(bool camera_moving, int pixelate = 1);
     void resize(int nx, int ny);
@@ -164,4 +171,7 @@ struct KernelInfo {
     void map_pbo();
     void unmap_pbo();
     void render_tile(int tile_offset_x, int tile_offset_y, int tile_w, int tile_h, int spp);
+
+    // Headless: render the full image and return RGBA pixel data
+    void render_to_buffer(std::vector<uint8_t>& output_rgba);
 };

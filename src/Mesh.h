@@ -1,6 +1,8 @@
 #pragma once
 
+#ifndef HEADLESS_BUILD
 #include <glad/glad.h>
+#endif
 #include <glm/glm.hpp>
 
 #include <memory>
@@ -46,8 +48,10 @@ public:
 	std::vector<unsigned int> indices;
 
 private:
-	GLuint _vao = 0;
-	GLuint _vbo = 0;
-	GLuint _ebo = 0;
-	GLsizei _index_count = 0;
+#ifndef HEADLESS_BUILD
+	unsigned int _vao = 0;
+	unsigned int _vbo = 0;
+	unsigned int _ebo = 0;
+	int _index_count = 0;
+#endif
 };

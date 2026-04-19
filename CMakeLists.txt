@@ -1,4 +1,4 @@
-﻿cmake_minimum_required (VERSION 3.24)
+cmake_minimum_required (VERSION 3.24)
 
 # Enable Hot Reload for MSVC compilers if supported.
 if (POLICY CMP0141)
@@ -8,22 +8,42 @@ endif()
 
 project ("cuda-raytracer" LANGUAGES CUDA CXX C)
 
+option(HEADLESS "Build without display dependencies (no OpenGL/GLFW/ImGui)" OFF)
+
+if(NOT HEADLESS)
 # Copy the shader source files to the build directory
 file(COPY ${CMAKE_SOURCE_DIR}/src/shaders DESTINATION .)
+endif()
 
 # The configurations listed below were modified and taken from https://github.com/Shot511/OpenGLSampleCmake
 
 # Add source files
-file(GLOB_RECURSE SOURCE_FILES 
+file(GLOB_RECURSE SOURCE_FILES
 	${CMAKE_SOURCE_DIR}/src/*.c
 	${CMAKE_SOURCE_DIR}/src/*.cpp
 	${CMAKE_SOURCE_DIR}/src/raytracer/*.cu)
-	
+
 # Add header files
-file(GLOB_RECURSE HEADER_FILES 
+file(GLOB_RECURSE HEADER_FILES
 	${CMAKE_SOURCE_DIR}/src/*.h
 	${CMAKE_SOURCE_DIR}/src/*.hpp
 	${CMAKE_SOURCE_DIR}/src/raytracer/*.h)
+
+if(HEADLESS)
+	# Exclude OpenGL-dependent source files from headless builds
+	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/Window\\.cpp$")
+	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/Quad\\.cpp$")
+	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/Rasterizer\\.cpp$")
+	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/Input\\.cpp$")
+	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/Picker\\.cpp$")
+	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/ShaderManager\\.cpp$")
+	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/Gui\\.cpp$")
+	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/GLTexture\\.cpp$")
+	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/glad\\.c$")
+else()
+	# Exclude headless-only source files from GUI builds
+	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/HeadlessTexture\\.cpp$")
+endif()
 
 # Add source to this project's executable.
 add_executable(${PROJECT_NAME} ${HEADER_FILES} ${SOURCE_FILES})
@@ -50,39 +70,9 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
 # LOOK for the packages that we need! #
 #######################################
 
-# OpenGL
-set(OpenGL_GL_PREFERENCE GLVND)
-find_package(OpenGL REQUIRED)
-
 # GLM
 find_package(GLM REQUIRED)
 message(STATUS "GLM included at ${GLM_INCLUDE_DIR}")
-
-# GLFW
-find_package(GLFW3 REQUIRED)
-message(STATUS "Found GLFW3 in ${GLFW3_INCLUDE_DIR}")
-
-# GLAD
-add_library(GLAD "thirdparty/glad.c")
-
-# Dear ImGui + ImGuiFileDialog
-add_library(IMGUI STATIC
-	thirdparty/imgui/imgui.cpp
-	thirdparty/imgui/imgui_draw.cpp
-	thirdparty/imgui/imgui_tables.cpp
-	thirdparty/imgui/imgui_widgets.cpp
-	thirdparty/imgui/backends/imgui_impl_glfw.cpp
-	thirdparty/imgui/backends/imgui_impl_opengl3.cpp
-	thirdparty/ImGuiFileDialog/ImGuiFileDialog.cpp
-)
-target_include_directories(IMGUI PUBLIC
-	"${CMAKE_SOURCE_DIR}/thirdparty/imgui"
-	"${CMAKE_SOURCE_DIR}/thirdparty/imgui/backends"
-	"${CMAKE_SOURCE_DIR}/thirdparty/ImGuiFileDialog"
-	"${CMAKE_SOURCE_DIR}/include"
-	"${CMAKE_SOURCE_DIR}/include/glad"
-)
-target_link_libraries(IMGUI ${GLFW3_LIBRARY} ${OPENGL_LIBRARY})
 
 # CUDA
 find_package(CUDAToolkit REQUIRED)
@@ -92,8 +82,45 @@ if(EXISTS "${CUDAToolkit_INCLUDE_DIRS}/cccl")
 	include_directories("${CUDAToolkit_INCLUDE_DIRS}/cccl")
 endif()
 
-# Put all libraries into a variable
-set(LIBS ${GLFW3_LIBRARY} ${OPENGL_LIBRARY} GLAD IMGUI ${CMAKE_DL_LIBS} CUDA::cudart CUDA::curand)
+if(HEADLESS)
+	target_compile_definitions(${PROJECT_NAME} PRIVATE HEADLESS_BUILD)
+
+	# Headless: only need CUDA and GLM
+	set(LIBS ${CMAKE_DL_LIBS} CUDA::cudart CUDA::curand)
+else()
+	# OpenGL
+	set(OpenGL_GL_PREFERENCE GLVND)
+	find_package(OpenGL REQUIRED)
+
+	# GLFW
+	find_package(GLFW3 REQUIRED)
+	message(STATUS "Found GLFW3 in ${GLFW3_INCLUDE_DIR}")
+
+	# GLAD
+	add_library(GLAD "thirdparty/glad.c")
+
+	# Dear ImGui + ImGuiFileDialog
+	add_library(IMGUI STATIC
+		thirdparty/imgui/imgui.cpp
+		thirdparty/imgui/imgui_draw.cpp
+		thirdparty/imgui/imgui_tables.cpp
+		thirdparty/imgui/imgui_widgets.cpp
+		thirdparty/imgui/backends/imgui_impl_glfw.cpp
+		thirdparty/imgui/backends/imgui_impl_opengl3.cpp
+		thirdparty/ImGuiFileDialog/ImGuiFileDialog.cpp
+	)
+	target_include_directories(IMGUI PUBLIC
+		"${CMAKE_SOURCE_DIR}/thirdparty/imgui"
+		"${CMAKE_SOURCE_DIR}/thirdparty/imgui/backends"
+		"${CMAKE_SOURCE_DIR}/thirdparty/ImGuiFileDialog"
+		"${CMAKE_SOURCE_DIR}/include"
+		"${CMAKE_SOURCE_DIR}/include/glad"
+	)
+	target_link_libraries(IMGUI ${GLFW3_LIBRARY} ${OPENGL_LIBRARY})
+
+	# Put all libraries into a variable
+	set(LIBS ${GLFW3_LIBRARY} ${OPENGL_LIBRARY} GLAD IMGUI ${CMAKE_DL_LIBS} CUDA::cudart CUDA::curand)
+endif()
 
 # Define the include DIRs
 include_directories(
@@ -158,7 +185,7 @@ if(MSVC)
 endif()
 
 # check for cache variable set in cmakepresets called IS_CUDA_DEBUG
-if(IS_CUDA_DEBUG) 
+if(IS_CUDA_DEBUG)
 	target_compile_options(${PROJECT_NAME} PRIVATE "$<$<AND:$<CONFIG:Debug>,$<COMPILE_LANGUAGE:CUDA>>:-G>")
 	message(STATUS "CUDA_DEBUG is ON")
 endif()
