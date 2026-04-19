@@ -43,6 +43,7 @@ public:
 	// Public accessors for the GUI to interact with
 	Scene& scene() { return *_scene; }
 	KernelInfo& renderer() { return *_current_frame->_renderer; }
+	bool input_edit_mode() const { return _input.edit_mode; }
 
 	// Rebuild the CUDA world from the scene and reset accumulation.
 	void scene_modified();

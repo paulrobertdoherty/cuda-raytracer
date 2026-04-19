@@ -32,16 +32,23 @@ void Input::process_camera_movement(GLFWwindow* window, KernelInfo& kernelInfo, 
 	double xpos, ypos;
 	glfwGetCursorPos(window, &xpos, &ypos);
 
-	double x_diff, y_diff;
+	double x_diff = 0.0, y_diff = 0.0;
 
 	int width, height;
 
 	glfwGetWindowSize(window, &width, &height);
 
-	x_diff = (xpos - last_xpos) / width;
-	y_diff = (ypos - last_ypos) / height;
-
-	if (x_diff != 0 || y_diff != 0) has_moved = true;
+	// Mouse-look only makes sense when the cursor is captured (sidebar hidden,
+	// not in edit mode). When the cursor is visible, the user is interacting
+	// with the GUI, and applying a yaw/pitch from every cursor move would drag
+	// the camera around with the mouse. Still update last_xpos/last_ypos so we
+	// don't apply a huge accumulated delta on the frame the cursor re-captures.
+	bool cursor_captured = glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
+	if (cursor_captured) {
+		x_diff = (xpos - last_xpos) / width;
+		y_diff = (ypos - last_ypos) / height;
+		if (x_diff != 0 || y_diff != 0) has_moved = true;
+	}
 
 	// pitch
 	rotation.x += y_diff * 30.0f;

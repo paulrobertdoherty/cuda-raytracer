@@ -329,13 +329,22 @@ void Window::tick_input(float t_diff) {
 	}
 	_enter_was_pressed = enter_down;
 
-	// Detect R key press (rising edge) — toggle rasterization preview.
+	// Detect R key press (rising edge) — toggle rasterization preview. R is
+	// a viewport-mode hotkey, so it fires even when ImGui has keyboard focus;
+	// otherwise sidebar nav focus would eat the second press and leave the
+	// user stuck in rasterization mode.
 	bool r_down = glfwGetKey(_window, GLFW_KEY_R) == GLFW_PRESS;
-	if (r_down && !_r_was_pressed && _render_mode == RenderMode::PREVIEW && !imgui_kb) {
+	if (r_down && !_r_was_pressed && _render_mode == RenderMode::PREVIEW) {
 		_rasterization_enabled = !_rasterization_enabled;
-		// Restart accumulation when toggling so the first ray-traced frame
-		// after switching back is treated as frame 1.
 		_frame_count = 1;
+		if (!_rasterization_enabled) {
+			// Clear the accumulation buffer so the stale rasterized image
+			// isn't blended in as the "previous frame" on the first ray trace.
+			// Clear the texture directly: copyFrameBufferTexture leaves
+			// _accum_frame's COLOR_ATTACHMENT0 detached, so an FBO-based
+			// glClear would silently be a no-op.
+			glClearTexImage(_accum_frame->texture, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+		}
 	}
 	_r_was_pressed = r_down;
 
@@ -394,15 +403,17 @@ void Window::tick_input(float t_diff) {
 			}
 			if (_input.lmb_down) _frame_count = 1;
 			_camera_moving = false;
-		} else if (!_gui->visible()) {
-			// Camera fly mode — only when the GUI overlay is hidden so
-			// the cursor is captured and mouse-look makes sense.
+		} else if (!imgui_kb) {
+			// Camera mode. Movement runs whether or not the sidebar is
+			// visible; process_camera_movement itself suppresses mouse-look
+			// when the cursor isn't captured, so WASD/Space/Ctrl/Q/E work
+			// with the GUI up and mouse-look only kicks in once the GUI is
+			// hidden. Text-entry focus sets imgui_kb and parks movement so
+			// typed letters don't nudge the camera.
 			_input.process_camera_movement(_window, *(_current_frame->_renderer), t_diff);
 			_camera_moving = _input.has_camera_moved();
 			if (_camera_moving) _frame_count = 1;
 		} else {
-			// GUI is visible but not in edit mode — show cursor for GUI
-			// interaction but don't process camera movement.
 			_camera_moving = false;
 		}
 	}
@@ -526,6 +537,14 @@ void Window::tick_render() {
 				_accum_frame->framebuffer, _accum_frame->texture);
 		} else {
 			int active_scale = (_camera_moving && preview_scale > 1) ? preview_scale : 1;
+
+			// Match the viewport to the render framebuffer size so the
+			// full-screen quad drawn into _current_frame / _accum_frame
+			// samples the full source texture (the containing window clear
+			// leaves the viewport at window size, which is wider than the
+			// render FBO when the sidebar is visible and would squash the
+			// accumulator output).
+			glViewport(0, 0, width, height);
 
 			glBindFramebuffer(GL_FRAMEBUFFER, _current_frame->framebuffer);
 			_current_frame->render_kernel(true, active_scale);

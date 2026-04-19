@@ -134,6 +134,8 @@ void Gui::draw(Window& app) {
         app.update_viewport();
     }
 
+    draw_mode_indicator(app);
+
     ImGui::Separator();
 
     draw_render_params(app);
@@ -145,6 +147,25 @@ void Gui::draw(Window& app) {
     ImGui::End();
 
     draw_file_dialogs(app);
+}
+
+// ---------------------------------------------------------------------------
+// Mode Indicator (Edit vs Camera — tracks Tab state)
+// ---------------------------------------------------------------------------
+
+void Gui::draw_mode_indicator(Window& app) {
+    bool edit = app.input_edit_mode();
+    ImVec4 color = edit ? ImVec4(1.0f, 0.75f, 0.1f, 1.0f)
+                        : ImVec4(0.4f, 0.9f, 0.4f, 1.0f);
+    const char* label = edit ? "Mode: EDIT (Tab to exit)"
+                             : "Mode: CAMERA (Tab to edit)";
+
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(color.x * 0.2f, color.y * 0.2f, color.z * 0.2f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, color);
+    ImGui::BeginDisabled();
+    ImGui::Button(label, ImVec2(-FLT_MIN, 0.0f));
+    ImGui::EndDisabled();
+    ImGui::PopStyleColor(2);
 }
 
 // ---------------------------------------------------------------------------

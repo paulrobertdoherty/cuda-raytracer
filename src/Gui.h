@@ -55,6 +55,7 @@ private:
     std::string _pending_normal_path;
     std::string _pending_specular_path;
 
+    void draw_mode_indicator(Window& app);
     void draw_render_params(Window& app);
     void draw_scene_objects(Window& app);
     void draw_add_object(Window& app);
