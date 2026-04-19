@@ -172,6 +172,9 @@ __global__ void build_world_from_desc(thrust::device_ptr<World*> d_world,
 			case DeviceMaterialKind::Emissive:
 				mat = new Emissive(d.emission);
 				break;
+			case DeviceMaterialKind::SubsurfaceScattering:
+				mat = new SubsurfaceScatter(d.albedo, d.scattering_distance, d.ior, d.extinction_coeff);
+				break;
 		}
 
 		Hittable* h = nullptr;
@@ -686,16 +689,19 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 		DeviceObjectDesc d = {};
 
 		switch (o.material) {
-			case SceneMaterial::Lambertian: d.material = DeviceMaterialKind::Lambertian; break;
-			case SceneMaterial::Metal:      d.material = DeviceMaterialKind::Metal; break;
-			case SceneMaterial::Dielectric: d.material = DeviceMaterialKind::Dielectric; break;
-			case SceneMaterial::Emissive:   d.material = DeviceMaterialKind::Emissive; break;
+			case SceneMaterial::Lambertian:           d.material = DeviceMaterialKind::Lambertian; break;
+			case SceneMaterial::Metal:                d.material = DeviceMaterialKind::Metal; break;
+			case SceneMaterial::Dielectric:           d.material = DeviceMaterialKind::Dielectric; break;
+			case SceneMaterial::Emissive:             d.material = DeviceMaterialKind::Emissive; break;
+			case SceneMaterial::SubsurfaceScattering: d.material = DeviceMaterialKind::SubsurfaceScattering; break;
 		}
 		d.albedo = o.albedo;
 		d.fuzz = o.fuzz;
 		d.ior = o.ior;
 		d.emission = o.emission;
 		d.is_light = o.is_light ? 1 : 0;
+		d.scattering_distance = o.scattering_distance;
+		d.extinction_coeff = o.extinction_coeff;
 		d.use_checker    = o.use_checker ? 1 : 0;
 		d.checker_color1 = o.checker_color1;
 		d.checker_color2 = o.checker_color2;

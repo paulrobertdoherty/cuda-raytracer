@@ -190,3 +190,54 @@ public:
 	}
 	__device__ ~Emissive() { delete emit; }
 };
+
+// Subsurface scattering (single-scatter approximation).
+// On hit, Schlick Fresnel picks between specular reflection and entering the
+// surface. Entering paths sample a free-path distance from an exponential
+// distribution scaled by `scattering_distance`, offset along a random
+// direction, then re-emit from that offset point with a cosine-weighted
+// hemisphere direction. Attenuation combines the base albedo with Beer's law
+// using per-channel extinction coefficients for color-dependent scattering.
+class SubsurfaceScatter : public Material {
+	glm::vec3 albedo;
+	float scattering_distance;
+	float ior;
+	glm::vec3 extinction_coeff;
+public:
+	__device__ SubsurfaceScatter(const glm::vec3& a, float sd, float ir, const glm::vec3& ext)
+		: albedo(a), scattering_distance(sd), ior(ir), extinction_coeff(ext) {}
+
+	__device__ bool scatter(const Ray& r_in, const HitRecord& rec,
+	                        glm::vec3& attenuation, Ray& scattered,
+	                        RandState* local_rand_state) const override {
+		glm::vec3 unit_dir = glm::normalize(r_in.direction);
+		float cos_theta = fminf(glm::dot(-unit_dir, rec.normal), 1.0f);
+
+		float r0 = (1.0f - ior) / (1.0f + ior);
+		r0 = r0 * r0;
+		float fresnel = r0 + (1.0f - r0) * powf(1.0f - cos_theta, 5.0f);
+
+		if (curand_uniform(local_rand_state) < fresnel) {
+			glm::vec3 reflected = reflect(unit_dir, rec.normal);
+			scattered = Ray(rec.p, reflected);
+			attenuation = glm::vec3(1.0f);
+			return true;
+		}
+
+		float xi = fmaxf(curand_uniform(local_rand_state), 1e-6f);
+		float scatter_dist = -logf(xi) * scattering_distance;
+
+		glm::vec3 scatter_offset = scatter_dist * random_in_unit_sphere(local_rand_state);
+		glm::vec3 exit_point = rec.p + scatter_offset;
+
+		glm::vec3 exit_dir = cosine_weighted_hemisphere(local_rand_state, rec.normal);
+		scattered = Ray(exit_point, exit_dir);
+
+		glm::vec3 beer = glm::vec3(
+			expf(-extinction_coeff.x * scatter_dist),
+			expf(-extinction_coeff.y * scatter_dist),
+			expf(-extinction_coeff.z * scatter_dist));
+		attenuation = albedo * beer;
+		return true;
+	}
+};

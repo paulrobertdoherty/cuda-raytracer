@@ -21,6 +21,7 @@ enum class RenderMode { PREVIEW, RENDER_FINAL, IDLE };
 
 class Window {
 public:
+	// Render viewport size (the area the ray tracer renders into).
 	unsigned int width;
 	unsigned int height;
 	int samples;
@@ -50,8 +51,26 @@ public:
 	// Switch to RENDER_FINAL mode.
 	void start_final_render();
 
+	// Full GLFW framebuffer dimensions.
+	unsigned int window_width() const { return _window_width; }
+	unsigned int window_height() const { return _window_height; }
+
+	// Called by the GLFW framebuffer-size callback when the window is resized.
+	void on_framebuffer_resize(unsigned int w, unsigned int h);
+
+	// Recompute the render viewport from the full window size and panel state.
+	// Called after window resize, GUI toggle, or panel-side change.
+	void update_viewport();
+
+	// The pixel offset where the render viewport begins (accounts for sidebar).
+	int viewport_x() const { return _viewport_x; }
+
 private:
 	GLFWwindow* _window;
+
+	unsigned int _window_width;
+	unsigned int _window_height;
+	int _viewport_x = 0;
 
 	ShaderManager _shaders;
 	Shader* _screen_shader = nullptr;
@@ -82,7 +101,6 @@ private:
 	bool _rasterization_enabled;
 	bool _g_was_pressed;
 	std::chrono::steady_clock::time_point _last_frame;
-
 
 	void tick_input(float t_diff);
 	void tick_render();

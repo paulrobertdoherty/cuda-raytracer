@@ -30,7 +30,8 @@ enum class SceneMaterial {
 	Lambertian,
 	Metal,
 	Dielectric,
-	Emissive
+	Emissive,
+	SubsurfaceScattering
 };
 
 // Single scene object. The union-ish geometry fields are interpreted based on
@@ -49,6 +50,10 @@ struct SceneObject {
 	float ior = 1.5f;
 	glm::vec3 emission = glm::vec3(0.0f);
 	bool is_light = false;
+
+	// Subsurface scattering parameters (used when material == SubsurfaceScattering)
+	float scattering_distance = 1.0f;
+	glm::vec3 extinction_coeff = glm::vec3(1.0f, 0.2f, 0.1f);
 
 	// Sphere: center + radius (center is the local center, position is added on top)
 	glm::vec3 center = glm::vec3(0.0f);

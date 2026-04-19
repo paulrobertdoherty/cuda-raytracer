@@ -20,9 +20,8 @@ Gui::Gui(GLFWwindow* window) {
 
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 4.0f;
+    style.WindowRounding = 0.0f;
     style.FrameRounding = 2.0f;
-    style.Alpha = 0.95f;
 
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 460");
@@ -57,8 +56,8 @@ bool Gui::wants_keyboard() const {
 // Material helpers
 // ---------------------------------------------------------------------------
 
-static const char* material_names[] = { "Lambertian", "Metal", "Dielectric", "Emissive" };
-static const int material_count = 4;
+static const char* material_names[] = { "Lambertian", "Metal", "Dielectric", "Emissive", "Subsurface" };
+static const int material_count = 5;
 
 static SceneMaterial material_from_index(int idx) {
     switch (idx) {
@@ -66,16 +65,18 @@ static SceneMaterial material_from_index(int idx) {
         case 1: return SceneMaterial::Metal;
         case 2: return SceneMaterial::Dielectric;
         case 3: return SceneMaterial::Emissive;
+        case 4: return SceneMaterial::SubsurfaceScattering;
         default: return SceneMaterial::Lambertian;
     }
 }
 
 static int index_from_material(SceneMaterial mat) {
     switch (mat) {
-        case SceneMaterial::Lambertian: return 0;
-        case SceneMaterial::Metal:      return 1;
-        case SceneMaterial::Dielectric: return 2;
-        case SceneMaterial::Emissive:   return 3;
+        case SceneMaterial::Lambertian:           return 0;
+        case SceneMaterial::Metal:                return 1;
+        case SceneMaterial::Dielectric:           return 2;
+        case SceneMaterial::Emissive:             return 3;
+        case SceneMaterial::SubsurfaceScattering: return 4;
         default: return 0;
     }
 }
@@ -92,38 +93,71 @@ static const char* kind_label(ProxyKind kind) {
 }
 
 // ---------------------------------------------------------------------------
-// Main draw entry point
+// Main draw entry point — single sidebar window
 // ---------------------------------------------------------------------------
 
 void Gui::draw(Window& app) {
     if (!_visible) return;
+
+    float win_w = (float)app.window_width();
+    float win_h = (float)app.window_height();
+    float pw = (float)_panel_width;
+
+    float sidebar_x = _panel_on_right ? (win_w - pw) : 0.0f;
+
+    ImGui::SetNextWindowPos(ImVec2(sidebar_x, 0.0f));
+    ImGui::SetNextWindowSize(ImVec2(pw, win_h));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove
+                           | ImGuiWindowFlags_NoResize
+                           | ImGuiWindowFlags_NoCollapse
+                           | ImGuiWindowFlags_NoTitleBar;
+
+    if (!ImGui::Begin("##Sidebar", nullptr, flags)) {
+        ImGui::End();
+        draw_file_dialogs(app);
+        return;
+    }
+
+    // Panel side toggle at the top
+    ImGui::Text("Panel Side:");
+    ImGui::SameLine();
+    bool changed_side = false;
+    if (ImGui::RadioButton("Left", !_panel_on_right)) {
+        if (_panel_on_right) { _panel_on_right = false; changed_side = true; }
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Right", _panel_on_right)) {
+        if (!_panel_on_right) { _panel_on_right = true; changed_side = true; }
+    }
+    if (changed_side) {
+        app.update_viewport();
+    }
+
+    ImGui::Separator();
 
     draw_render_params(app);
     draw_camera_info(app);
     draw_scene_objects(app);
     draw_add_object(app);
     draw_file_loader(app);
+
+    ImGui::End();
+
+    draw_file_dialogs(app);
 }
 
 // ---------------------------------------------------------------------------
-// Render Parameters Panel
+// Render Parameters Section
 // ---------------------------------------------------------------------------
 
 void Gui::draw_render_params(Window& app) {
-    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(300, 220), ImGuiCond_FirstUseEver);
-
-    if (!ImGui::Begin("Render Parameters")) {
-        ImGui::End();
+    if (!ImGui::CollapsingHeader("Render Parameters", ImGuiTreeNodeFlags_DefaultOpen))
         return;
-    }
 
-    bool changed = false;
+    ImGui::SliderInt("Samples", &app.samples, 1, 128);
+    ImGui::SliderInt("Max Depth", &app.max_depth, 1, 100);
 
-    changed |= ImGui::SliderInt("Samples", &app.samples, 1, 128);
-    changed |= ImGui::SliderInt("Max Depth", &app.max_depth, 1, 100);
-
-    float prev_fov = app.fov;
     if (ImGui::SliderFloat("FOV", &app.fov, 10.0f, 170.0f)) {
         app.renderer().camera_info.fov = app.fov;
         app.renderer().set_camera(
@@ -140,26 +174,21 @@ void Gui::draw_render_params(Window& app) {
         app.preview_scale = ps < 1 ? 1 : ps;
     }
 
-    ImGui::Separator();
+    ImGui::Spacing();
     if (ImGui::Button("Start Final Render")) {
         app.start_final_render();
     }
 
-    ImGui::End();
+    ImGui::Spacing();
 }
 
 // ---------------------------------------------------------------------------
-// Camera Info Panel
+// Camera Info Section
 // ---------------------------------------------------------------------------
 
 void Gui::draw_camera_info(Window& app) {
-    ImGui::SetNextWindowPos(ImVec2(10, 240), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(300, 120), ImGuiCond_FirstUseEver);
-
-    if (!ImGui::Begin("Camera")) {
-        ImGui::End();
+    if (!ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
         return;
-    }
 
     CameraInfo& cam = app.renderer().camera_info;
     float pos[3] = { cam.origin.x, cam.origin.y, cam.origin.z };
@@ -177,21 +206,16 @@ void Gui::draw_camera_info(Window& app) {
         app.reset_accumulation();
     }
 
-    ImGui::End();
+    ImGui::Spacing();
 }
 
 // ---------------------------------------------------------------------------
-// Scene Objects Panel
+// Scene Objects Section
 // ---------------------------------------------------------------------------
 
 void Gui::draw_scene_objects(Window& app) {
-    ImGui::SetNextWindowPos(ImVec2(10, 370), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(320, 350), ImGuiCond_FirstUseEver);
-
-    if (!ImGui::Begin("Scene Objects")) {
-        ImGui::End();
+    if (!ImGui::CollapsingHeader("Scene Objects", ImGuiTreeNodeFlags_DefaultOpen))
         return;
-    }
 
     auto& objects = app.scene().mutable_objects();
     int delete_idx = -1;
@@ -202,16 +226,14 @@ void Gui::draw_scene_objects(Window& app) {
         ImGui::PushID(i);
 
         char label[64];
-        snprintf(label, sizeof(label), "[%d] %s##obj", i, kind_label(o.kind));
+        snprintf(label, sizeof(label), "[%d] %s", i, kind_label(o.kind));
 
-        if (ImGui::CollapsingHeader(label)) {
+        if (ImGui::TreeNode(label)) {
             bool changed = false;
 
-            // Material
             int mat_idx = index_from_material(o.material);
             if (ImGui::Combo("Material", &mat_idx, material_names, material_count)) {
                 o.material = material_from_index(mat_idx);
-                // Set sensible defaults when switching materials
                 if (o.material == SceneMaterial::Emissive) {
                     o.is_light = true;
                     if (o.emission == glm::vec3(0.0f)) o.emission = glm::vec3(4.0f);
@@ -221,7 +243,6 @@ void Gui::draw_scene_objects(Window& app) {
                 changed = true;
             }
 
-            // Material-specific properties
             if (o.material == SceneMaterial::Lambertian || o.material == SceneMaterial::Metal) {
                 float col[3] = { o.albedo.r, o.albedo.g, o.albedo.b };
                 if (ImGui::ColorEdit3("Albedo", col)) {
@@ -243,10 +264,24 @@ void Gui::draw_scene_objects(Window& app) {
                     changed = true;
                 }
             }
+            if (o.material == SceneMaterial::SubsurfaceScattering) {
+                float col[3] = { o.albedo.r, o.albedo.g, o.albedo.b };
+                if (ImGui::ColorEdit3("Albedo", col)) {
+                    o.albedo = glm::vec3(col[0], col[1], col[2]);
+                    o.color = o.albedo;
+                    changed = true;
+                }
+                changed |= ImGui::SliderFloat("IOR", &o.ior, 1.0f, 3.0f);
+                changed |= ImGui::SliderFloat("Scatter Dist", &o.scattering_distance, 0.01f, 10.0f);
+                float ext[3] = { o.extinction_coeff.r, o.extinction_coeff.g, o.extinction_coeff.b };
+                if (ImGui::DragFloat3("Extinction", ext, 0.05f, 0.0f, 20.0f)) {
+                    o.extinction_coeff = glm::vec3(ext[0], ext[1], ext[2]);
+                    changed = true;
+                }
+            }
 
             changed |= ImGui::Checkbox("Is Light", &o.is_light);
 
-            // Position & scale
             float pos[3] = { o.position.x, o.position.y, o.position.z };
             if (ImGui::DragFloat3("Position", pos, 0.05f)) {
                 o.position = glm::vec3(pos[0], pos[1], pos[2]);
@@ -254,7 +289,6 @@ void Gui::draw_scene_objects(Window& app) {
             }
             changed |= ImGui::DragFloat("Scale", &o.scale, 0.01f, 0.01f, 100.0f);
 
-            // Geometry-specific
             if (o.kind == ProxyKind::Sphere) {
                 float c[3] = { o.center.x, o.center.y, o.center.z };
                 if (ImGui::DragFloat3("Center", c, 0.05f)) {
@@ -277,7 +311,6 @@ void Gui::draw_scene_objects(Window& app) {
                 changed |= ImGui::DragFloat("Radius", &o.radius, 0.01f, 0.01f, 100.0f);
             }
 
-            // Checker texture
             if (o.material == SceneMaterial::Lambertian) {
                 if (ImGui::Checkbox("Checker Texture", &o.use_checker)) changed = true;
                 if (o.use_checker) {
@@ -299,6 +332,7 @@ void Gui::draw_scene_objects(Window& app) {
             }
 
             if (changed) any_changed = true;
+            ImGui::TreePop();
         }
 
         ImGui::PopID();
@@ -313,76 +347,84 @@ void Gui::draw_scene_objects(Window& app) {
         app.scene_modified();
     }
 
-    ImGui::End();
+    ImGui::Spacing();
 }
 
 // ---------------------------------------------------------------------------
-// Add Object Panel
+// Add Object Section
 // ---------------------------------------------------------------------------
 
 void Gui::draw_add_object(Window& app) {
-    ImGui::SetNextWindowPos(ImVec2(340, 10), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(280, 320), ImGuiCond_FirstUseEver);
-
-    if (!ImGui::Begin("Add Object")) {
-        ImGui::End();
+    if (!ImGui::CollapsingHeader("Add Object"))
         return;
-    }
 
     const char* obj_types[] = { "Sphere", "Disc" };
     ImGui::Combo("Type", &_new_obj_type, obj_types, 2);
+    ImGui::Combo("Material##add", &_new_obj_material, material_names, material_count);
 
-    ImGui::Combo("Material", &_new_obj_material, material_names, material_count);
-
-    // Material-specific inputs
     SceneMaterial mat = material_from_index(_new_obj_material);
     if (mat == SceneMaterial::Lambertian || mat == SceneMaterial::Metal) {
         float col[3] = { _new_obj_albedo.r, _new_obj_albedo.g, _new_obj_albedo.b };
-        if (ImGui::ColorEdit3("Albedo", col)) {
+        if (ImGui::ColorEdit3("Albedo##add", col)) {
             _new_obj_albedo = glm::vec3(col[0], col[1], col[2]);
         }
     }
     if (mat == SceneMaterial::Metal) {
-        ImGui::SliderFloat("Fuzz", &_new_obj_fuzz, 0.0f, 1.0f);
+        ImGui::SliderFloat("Fuzz##add", &_new_obj_fuzz, 0.0f, 1.0f);
     }
     if (mat == SceneMaterial::Dielectric) {
-        ImGui::SliderFloat("IOR", &_new_obj_ior, 1.0f, 3.0f);
+        ImGui::SliderFloat("IOR##add", &_new_obj_ior, 1.0f, 3.0f);
     }
     if (mat == SceneMaterial::Emissive) {
         float em[3] = { _new_obj_emission.r, _new_obj_emission.g, _new_obj_emission.b };
-        if (ImGui::DragFloat3("Emission", em, 0.1f, 0.0f, 50.0f)) {
+        if (ImGui::DragFloat3("Emission##add", em, 0.1f, 0.0f, 50.0f)) {
             _new_obj_emission = glm::vec3(em[0], em[1], em[2]);
+        }
+    }
+    if (mat == SceneMaterial::SubsurfaceScattering) {
+        float col[3] = { _new_obj_albedo.r, _new_obj_albedo.g, _new_obj_albedo.b };
+        if (ImGui::ColorEdit3("Albedo##addsss", col)) {
+            _new_obj_albedo = glm::vec3(col[0], col[1], col[2]);
+        }
+        ImGui::SliderFloat("IOR##addsss", &_new_obj_ior, 1.0f, 3.0f);
+        ImGui::SliderFloat("Scatter Dist##addsss", &_new_obj_scatter_dist, 0.01f, 10.0f);
+        float ext[3] = { _new_obj_extinction.r, _new_obj_extinction.g, _new_obj_extinction.b };
+        if (ImGui::DragFloat3("Extinction##addsss", ext, 0.05f, 0.0f, 20.0f)) {
+            _new_obj_extinction = glm::vec3(ext[0], ext[1], ext[2]);
         }
     }
 
     ImGui::Separator();
 
     if (_new_obj_type == 0) {
-        // Sphere
         float c[3] = { _new_sphere_center.x, _new_sphere_center.y, _new_sphere_center.z };
-        ImGui::DragFloat3("Center", c, 0.05f);
+        ImGui::DragFloat3("Center##sph", c, 0.05f);
         _new_sphere_center = glm::vec3(c[0], c[1], c[2]);
-        ImGui::DragFloat("Radius", &_new_sphere_radius, 0.01f, 0.01f, 100.0f);
+        ImGui::DragFloat("Radius##sph", &_new_sphere_radius, 0.01f, 0.01f, 100.0f);
 
         if (ImGui::Button("Add Sphere")) {
             bool is_light = (mat == SceneMaterial::Emissive);
             glm::vec3 emission = is_light ? _new_obj_emission : glm::vec3(0.0f);
-            app.scene().add_sphere(_new_sphere_center, _new_sphere_radius,
-                                   mat, _new_obj_albedo, _new_obj_fuzz, _new_obj_ior,
-                                   emission, is_light);
+            int idx = app.scene().add_sphere(_new_sphere_center, _new_sphere_radius,
+                                             mat, _new_obj_albedo, _new_obj_fuzz, _new_obj_ior,
+                                             emission, is_light);
+            if (mat == SceneMaterial::SubsurfaceScattering && idx >= 0) {
+                SceneObject& o = app.scene().mutable_objects()[idx];
+                o.scattering_distance = _new_obj_scatter_dist;
+                o.extinction_coeff = _new_obj_extinction;
+            }
             app.scene_modified();
         }
     } else {
-        // Disc
         float c[3] = { _new_disc_center.x, _new_disc_center.y, _new_disc_center.z };
-        ImGui::DragFloat3("Center", c, 0.05f);
+        ImGui::DragFloat3("Center##disc", c, 0.05f);
         _new_disc_center = glm::vec3(c[0], c[1], c[2]);
 
         float n[3] = { _new_disc_normal.x, _new_disc_normal.y, _new_disc_normal.z };
-        ImGui::DragFloat3("Normal", n, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat3("Normal##disc", n, 0.01f, -1.0f, 1.0f);
         _new_disc_normal = glm::vec3(n[0], n[1], n[2]);
 
-        ImGui::DragFloat("Radius", &_new_disc_radius, 0.01f, 0.01f, 100.0f);
+        ImGui::DragFloat("Radius##disc", &_new_disc_radius, 0.01f, 0.01f, 100.0f);
 
         if (ImGui::Button("Add Disc")) {
             SceneObject disc;
@@ -397,58 +439,55 @@ void Gui::draw_add_object(Window& app) {
             disc.is_light = (mat == SceneMaterial::Emissive);
             disc.emission = disc.is_light ? _new_obj_emission : glm::vec3(0.0f);
             disc.color = disc.is_light ? glm::vec3(1.0f) : disc.albedo;
+            disc.scattering_distance = _new_obj_scatter_dist;
+            disc.extinction_coeff = _new_obj_extinction;
             app.scene().mutable_objects().push_back(disc);
             app.scene_modified();
         }
     }
 
-    ImGui::End();
+    ImGui::Spacing();
 }
 
 // ---------------------------------------------------------------------------
-// File Loader Panel (OBJ + textures)
+// File Loader Section (OBJ + textures)
 // ---------------------------------------------------------------------------
 
 void Gui::draw_file_loader(Window& app) {
-    ImGui::SetNextWindowPos(ImVec2(340, 340), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(340, 260), ImGuiCond_FirstUseEver);
-
-    if (!ImGui::Begin("Load Model")) {
-        ImGui::End();
+    if (!ImGui::CollapsingHeader("Load Model"))
         return;
-    }
 
-    // OBJ file
-    ImGui::Text("OBJ: %s", _pending_obj_path.empty() ? "(none)" : _pending_obj_path.c_str());
+    ImGui::Text("OBJ:");
     ImGui::SameLine();
-    if (ImGui::Button("Browse##obj")) {
+    ImGui::TextWrapped("%s", _pending_obj_path.empty() ? "(none)" : _pending_obj_path.c_str());
+    if (ImGui::Button("Browse OBJ")) {
         IGFD::FileDialogConfig config;
         config.path = ".";
         ImGuiFileDialog::Instance()->OpenDialog("ChooseOBJ", "Select OBJ File", ".obj", config);
     }
 
-    // Diffuse texture
-    ImGui::Text("Diffuse: %s", _pending_diffuse_path.empty() ? "(auto from .mtl)" : _pending_diffuse_path.c_str());
+    ImGui::Text("Diffuse:");
     ImGui::SameLine();
-    if (ImGui::Button("Browse##diffuse")) {
+    ImGui::TextWrapped("%s", _pending_diffuse_path.empty() ? "(auto)" : _pending_diffuse_path.c_str());
+    if (ImGui::Button("Browse Diffuse")) {
         IGFD::FileDialogConfig config;
         config.path = ".";
         ImGuiFileDialog::Instance()->OpenDialog("ChooseDiffuse", "Select Diffuse Texture", ".png,.jpg,.jpeg,.tga,.bmp", config);
     }
 
-    // Normal map
-    ImGui::Text("Normal: %s", _pending_normal_path.empty() ? "(auto from .mtl)" : _pending_normal_path.c_str());
+    ImGui::Text("Normal:");
     ImGui::SameLine();
-    if (ImGui::Button("Browse##normal")) {
+    ImGui::TextWrapped("%s", _pending_normal_path.empty() ? "(auto)" : _pending_normal_path.c_str());
+    if (ImGui::Button("Browse Normal")) {
         IGFD::FileDialogConfig config;
         config.path = ".";
         ImGuiFileDialog::Instance()->OpenDialog("ChooseNormal", "Select Normal Map", ".png,.jpg,.jpeg,.tga,.bmp", config);
     }
 
-    // Specular map
-    ImGui::Text("Specular: %s", _pending_specular_path.empty() ? "(auto from .mtl)" : _pending_specular_path.c_str());
+    ImGui::Text("Specular:");
     ImGui::SameLine();
-    if (ImGui::Button("Browse##specular")) {
+    ImGui::TextWrapped("%s", _pending_specular_path.empty() ? "(auto)" : _pending_specular_path.c_str());
+    if (ImGui::Button("Browse Specular")) {
         IGFD::FileDialogConfig config;
         config.path = ".";
         ImGuiFileDialog::Instance()->OpenDialog("ChooseSpecular", "Select Specular Map", ".png,.jpg,.jpeg,.tga,.bmp", config);
@@ -480,7 +519,14 @@ void Gui::draw_file_loader(Window& app) {
         _pending_specular_path.clear();
     }
 
-    // Handle file dialog results
+    ImGui::Spacing();
+}
+
+// ---------------------------------------------------------------------------
+// File dialog results (rendered outside the sidebar so they float freely)
+// ---------------------------------------------------------------------------
+
+void Gui::draw_file_dialogs(Window& app) {
     if (ImGuiFileDialog::Instance()->Display("ChooseOBJ")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
             _pending_obj_path = ImGuiFileDialog::Instance()->GetFilePathName();
@@ -505,6 +551,4 @@ void Gui::draw_file_loader(Window& app) {
         }
         ImGuiFileDialog::Instance()->Close();
     }
-
-    ImGui::End();
 }
