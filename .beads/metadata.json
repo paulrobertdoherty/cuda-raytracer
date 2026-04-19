@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "cuda_raytracer",
+  "project_id": "06687777-068c-4986-9b2a-e7be29c61fcb"
+}
