@@ -159,6 +159,11 @@ struct KernelInfo {
     std::vector<int>            d_texture_heights;
     std::vector<int>            d_texture_channels;
 
+    // Reused descriptor upload buffer — grown on demand, freed in the
+    // destructor. Avoids a cudaMalloc/cudaFree pair on every scene rebuild.
+    DeviceObjectDesc* d_desc_buffer = nullptr;
+    int               d_desc_buffer_capacity = 0;
+
     KernelInfo() {}
     ~KernelInfo();
     KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int samples, int max_depth, float fov);

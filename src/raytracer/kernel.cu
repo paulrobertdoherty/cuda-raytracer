@@ -454,6 +454,12 @@ KernelInfo::~KernelInfo() {
 		d_headless_buffer = nullptr;
 	}
 
+	if (d_desc_buffer) {
+		cudaFree(d_desc_buffer);
+		d_desc_buffer = nullptr;
+		d_desc_buffer_capacity = 0;
+	}
+
 	// Release any cached mesh vertex/index buffers. These are owned by
 	// KernelInfo (not by the device-side TriangleMesh Hittables) so we
 	// free them after the world has been torn down.
@@ -802,19 +808,24 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 
 	// ---- Upload descriptors and launch the device-side rebuild -----------
 	int count = (int)descs.size();
-	DeviceObjectDesc* d_descs = nullptr;
 	if (count > 0) {
-		check_cuda_errors(cudaMalloc(&d_descs, sizeof(DeviceObjectDesc) * count));
-		check_cuda_errors(cudaMemcpy(d_descs, descs.data(),
+		// Grow the reused descriptor buffer only when the current scene is
+		// larger than any prior scene. cudaMalloc has non-trivial overhead;
+		// reusing the buffer eliminates it on steady-state scene edits.
+		if (count > d_desc_buffer_capacity) {
+			if (d_desc_buffer) {
+				check_cuda_errors(cudaFree(d_desc_buffer));
+			}
+			check_cuda_errors(cudaMalloc(&d_desc_buffer,
+				sizeof(DeviceObjectDesc) * count));
+			d_desc_buffer_capacity = count;
+		}
+		check_cuda_errors(cudaMemcpy(d_desc_buffer, descs.data(),
 		                             sizeof(DeviceObjectDesc) * count,
 		                             cudaMemcpyHostToDevice));
 	}
 
-	build_world_from_desc<<<1, 1>>>(d_world, d_descs, count);
+	build_world_from_desc<<<1, 1>>>(d_world, d_desc_buffer, count);
 	check_cuda_errors(cudaGetLastError());
 	check_cuda_errors(cudaDeviceSynchronize());
-
-	if (d_descs) {
-		check_cuda_errors(cudaFree(d_descs));
-	}
 }

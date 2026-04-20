@@ -93,7 +93,9 @@ public:
 			local_dir.y != 0.0f ? 1.0f / local_dir.y : AXIS_PARALLEL_INV,
 			local_dir.z != 0.0f ? 1.0f / local_dir.z : AXIS_PARALLEL_INV);
 
-		// Stack-based iterative BVH traversal.
+		// Stack-based iterative BVH traversal. 32 slots fits a balanced BVH
+		// with ~4 billion triangles, so overflow here means the BVH is
+		// pathologically unbalanced and something has gone wrong upstream.
 		constexpr int MAX_STACK = 32;
 		int stack[MAX_STACK];
 		int stack_ptr = 0;
@@ -194,7 +196,12 @@ public:
 					hit_any = true;
 				}
 			} else {
-				// Internal node: push children.
+				// Internal node: push children, guarding the fixed-size stack.
+				// Overflow here would silently drop subtrees and produce
+				// missing-geometry artifacts; trap so the error is loud.
+				if (stack_ptr + 2 > MAX_STACK) {
+					__trap();
+				}
 				stack[stack_ptr++] = node.left_child;
 				stack[stack_ptr++] = node.right_child;
 			}
