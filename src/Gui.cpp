@@ -49,7 +49,11 @@ bool Gui::wants_mouse() const {
 }
 
 bool Gui::wants_keyboard() const {
-    return ImGui::GetIO().WantCaptureKeyboard;
+    // WantTextInput is true only while a text field has focus. The broader
+    // WantCaptureKeyboard flag is also true whenever any ImGui window holds
+    // nav focus (which the sidebar does at startup), which would incorrectly
+    // block WASD camera movement until the user clicked away or pressed Tab.
+    return ImGui::GetIO().WantTextInput;
 }
 
 // ---------------------------------------------------------------------------

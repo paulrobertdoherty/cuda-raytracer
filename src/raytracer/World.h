@@ -22,24 +22,17 @@ public:
     int num_lights;
     int lights_capacity;
 
-    __device__ World() {
-        objects = new Hittable*[20];
-        number_of_objects = 0;
-        capacity = 20;
-        bvh_root = nullptr;
-        lights = new Hittable*[20];
-        num_lights = 0;
-        lights_capacity = 20;
-    }
+    __device__ World() : World(8) {}
 
-    __device__ World(int capacity) {
-        objects = new Hittable*[capacity];
+    __device__ World(int initial_capacity) {
+        int cap = initial_capacity > 0 ? initial_capacity : 8;
+        objects = new Hittable*[cap];
         number_of_objects = 0;
-        this->capacity = capacity;
+        this->capacity = cap;
         bvh_root = nullptr;
-        lights = new Hittable*[20];
+        lights = new Hittable*[cap];
         num_lights = 0;
-        lights_capacity = 20;
+        lights_capacity = cap;
     }
 
     __device__ ~World();
@@ -67,16 +60,28 @@ public:
 
     __device__ bool add(Hittable* object) {
         if (number_of_objects >= capacity) {
-			return false;
-		}
+            int new_cap = capacity * 2;
+            Hittable** bigger = new Hittable*[new_cap];
+            for (int i = 0; i < number_of_objects; i++) bigger[i] = objects[i];
+            delete[] objects;
+            objects = bigger;
+            capacity = new_cap;
+        }
 
         objects[number_of_objects] = object;
-		number_of_objects++;
-		return true;
+        number_of_objects++;
+        return true;
     }
 
     __device__ bool add_light(Hittable* object) {
-        if (num_lights >= lights_capacity) return false;
+        if (num_lights >= lights_capacity) {
+            int new_cap = lights_capacity * 2;
+            Hittable** bigger = new Hittable*[new_cap];
+            for (int i = 0; i < num_lights; i++) bigger[i] = lights[i];
+            delete[] lights;
+            lights = bigger;
+            lights_capacity = new_cap;
+        }
         lights[num_lights++] = object;
         return true;
     }

@@ -536,7 +536,12 @@ void Window::tick_render() {
 				_raster_frame->framebuffer, _raster_frame->texture,
 				_accum_frame->framebuffer, _accum_frame->texture);
 		} else {
-			int active_scale = (_camera_moving && preview_scale > 1) ? preview_scale : 1;
+			// Pixelate while the accumulator is fresh (camera moved, or first
+			// frame after launch/scene-change) so preview_scale visibly
+			// applies from the very first frame instead of only kicking in
+			// once the user has wiggled the camera.
+			bool fresh = _camera_moving || _frame_count <= 1;
+			int active_scale = (fresh && preview_scale > 1) ? preview_scale : 1;
 
 			// Match the viewport to the render framebuffer size so the
 			// full-screen quad drawn into _current_frame / _accum_frame
