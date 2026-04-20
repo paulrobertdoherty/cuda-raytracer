@@ -125,7 +125,7 @@ OBJ loading pipeline:
             -> cudaMalloc + memcpy -> TriangleMesh (device)
 
 Accumulation shader (GLSL):
-  Static camera  -> progressive blend toward converged image (up to 500 frames)
+  Static camera  -> running average: new frame weighted 1/N, giving progressive convergence
   Moving camera  -> exponential blend (20% new / 80% old) to reduce ghosting
 ```
 

@@ -182,6 +182,11 @@ if(MSVC)
 		"$<$<COMPILE_LANGUAGE:CXX>:/Zc:preprocessor>"
 		"$<$<COMPILE_LANGUAGE:C>:/Zc:preprocessor>"
 		"$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>")
+else()
+	target_compile_options(${PROJECT_NAME} PRIVATE
+		"$<$<COMPILE_LANGUAGE:CXX>:-Wall>"
+		"$<$<COMPILE_LANGUAGE:CXX>:-Wextra>"
+		"$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Wall,-Wextra>")
 endif()
 
 # check for cache variable set in cmakepresets called IS_CUDA_DEBUG

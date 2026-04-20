@@ -8,10 +8,8 @@
 #include <iostream>
 #include <string>
 #include <cstdlib>
-
 #ifdef HEADLESS_BUILD
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h"
+#include <fstream>
 #endif
 
 #if defined(__linux__) && !defined(HEADLESS_BUILD)
@@ -39,7 +37,7 @@ void print_usage(const char* program_name) {
 		<< "  --obj <path>       Load a wavefront .obj mesh into the scene\n"
 		<< "  --texture <path>   Diffuse texture (PNG/JPG/TGA) for the loaded mesh\n"
 #ifdef HEADLESS_BUILD
-		<< "  --output <path>    Output PNG file path (required in headless mode)\n"
+		<< "  --output <path>    Output raw RGBA file path (required in headless mode)\n"
 		<< "  --camera-pos <x,y,z>   Camera position (default: 0,1,4)\n"
 		<< "  --camera-target <x,y,z> Camera look-at target (default: 0,0,0)\n"
 #endif
@@ -147,15 +145,19 @@ int main(int argc, char* argv[])
 	std::vector<uint8_t> pixels;
 	renderer.render_to_buffer(pixels);
 
-	// Write PNG
-	int result = stbi_write_png(output_path.c_str(), width, height, 4,
-	                            pixels.data(), width * 4);
-	if (result) {
-		std::cout << "Saved: " << output_path << std::endl;
-	} else {
+	std::ofstream out(output_path, std::ios::binary);
+	if (!out) {
+		std::cerr << "Failed to open: " << output_path << std::endl;
+		return 1;
+	}
+	out.write(reinterpret_cast<const char*>(pixels.data()),
+	          static_cast<std::streamsize>(pixels.size()));
+	if (!out) {
 		std::cerr << "Failed to write: " << output_path << std::endl;
 		return 1;
 	}
+	std::cout << "Saved " << width << "x" << height
+	          << " RGBA to: " << output_path << std::endl;
 
 	return 0;
 #else

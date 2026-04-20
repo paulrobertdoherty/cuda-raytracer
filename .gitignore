@@ -15,8 +15,16 @@ out
 
 # Linux build artifacts
 build/
+build-headless/
 *.o
 cuda-raytracer
+
+# Render outputs
+*.png
+*.rgba
+
+# Session transcripts
+2026-*.txt
 
 # Beads / Dolt files (added by bd init)
 .dolt/
