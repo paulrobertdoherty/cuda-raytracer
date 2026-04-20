@@ -5,6 +5,7 @@
 #include "Material.h"
 #include "AABB.h"
 #include "MeshBVHNode.h"
+#include "Constants.h"
 
 // A full indexed triangle mesh packed into one Hittable. Unlike individual
 // Triangle objects, the mesh owns its vertex and index buffers and its own
@@ -80,10 +81,17 @@ public:
 		glm::vec3 local_origin = (r.origin - translate) * inv_scale;
 		glm::vec3 local_dir    = r.direction * inv_scale;
 
-		// Precompute inverse direction for AABB slab tests.
-		glm::vec3 inv_dir = glm::vec3(1.0f / local_dir.x,
-		                               1.0f / local_dir.y,
-		                               1.0f / local_dir.z);
+		// Precompute inverse direction for AABB slab tests. If a component is
+		// exactly zero, use a large finite value so (plane - origin) * inv_dir
+		// cannot produce 0*inf = NaN. The sign is irrelevant because the
+		// "parallel to slab" case is handled by the t_max/t_min comparisons:
+		// with a huge magnitude, t0 and t1 blow up in opposite directions,
+		// correctly reporting miss iff origin is outside the slab.
+		constexpr float AXIS_PARALLEL_INV = 1e30f;
+		glm::vec3 inv_dir = glm::vec3(
+			local_dir.x != 0.0f ? 1.0f / local_dir.x : AXIS_PARALLEL_INV,
+			local_dir.y != 0.0f ? 1.0f / local_dir.y : AXIS_PARALLEL_INV,
+			local_dir.z != 0.0f ? 1.0f / local_dir.z : AXIS_PARALLEL_INV);
 
 		// Stack-based iterative BVH traversal.
 		constexpr int MAX_STACK = 32;
@@ -120,7 +128,7 @@ public:
 					glm::vec3 edge2 = v2 - v0;
 					glm::vec3 h = glm::cross(local_dir, edge2);
 					float a = glm::dot(edge1, h);
-					if (fabsf(a) < 1e-8f) continue;
+					if (fabsf(a) < RAY_PARALLEL_EPS) continue;
 					float f = 1.0f / a;
 					glm::vec3 s = local_origin - v0;
 					float u = f * glm::dot(s, h);

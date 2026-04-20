@@ -23,9 +23,17 @@ public:
 
 	__device__ inline bool hit(const Ray& r, float t_min, float t_max) const {
 		for (int a = 0; a < 3; a++) {
-			auto invD = 1.0f / r.direction[a];
-			auto t0 = (_min[a] - r.origin[a]) * invD;
-			auto t1 = (_max[a] - r.origin[a]) * invD;
+			float dir = r.direction[a];
+			if (dir == 0.0f) {
+				// Ray is parallel to this axis's slabs: miss iff origin is
+				// outside. Otherwise this axis imposes no constraint.
+				if (r.origin[a] < _min[a] || r.origin[a] > _max[a])
+					return false;
+				continue;
+			}
+			float invD = 1.0f / dir;
+			float t0 = (_min[a] - r.origin[a]) * invD;
+			float t1 = (_max[a] - r.origin[a]) * invD;
 			if (invD < 0.0f) {
 				float tmp = t0; t0 = t1; t1 = tmp;
 			}

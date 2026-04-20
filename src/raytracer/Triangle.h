@@ -4,6 +4,7 @@
 #include "Hittable.h"
 #include "Material.h"
 #include "AABB.h"
+#include "Constants.h"
 
 class Triangle : public Hittable {
 public:
@@ -26,7 +27,7 @@ public:
 		glm::vec3 h = glm::cross(r.direction, edge2);
 		float a = glm::dot(edge1, h);
 
-		if (fabsf(a) < 1e-8f) return false;
+		if (fabsf(a) < RAY_PARALLEL_EPS) return false;
 
 		float f = 1.0f / a;
 		glm::vec3 s = r.origin - v0;

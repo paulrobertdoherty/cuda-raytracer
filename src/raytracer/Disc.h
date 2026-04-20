@@ -4,6 +4,7 @@
 #include "Hittable.h"
 #include "Material.h"
 #include "AABB.h"
+#include "Constants.h"
 
 #define DISC_PI 3.14159265358979323846f
 
@@ -41,7 +42,7 @@ public:
 
 	__device__ bool hit(const Ray& r, float t_min, float t_max, HitRecord& rec) const override {
 		float denom = glm::dot(normal, r.direction);
-		if (fabsf(denom) < 1e-8f) return false;
+		if (fabsf(denom) < RAY_PARALLEL_EPS) return false;
 
 		float t = (D - glm::dot(normal, r.origin)) / denom;
 		if (t < t_min || t > t_max) return false;

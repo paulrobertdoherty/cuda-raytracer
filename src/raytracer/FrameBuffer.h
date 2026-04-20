@@ -32,6 +32,7 @@ public:
 #ifdef __CUDACC__
 #include "Material.h"
 #include "World.h"
+#include "Constants.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846264338327950288f
@@ -43,6 +44,12 @@ __device__ void FrameBuffer::writePixel(int x, int y, glm::vec4 pixel) {
 	int idx = y * width + x;
 	// convert RGBA to BGRA that buffer uses
 	device_ptr[idx] = glm::packUnorm4x8(glm::vec4(pixel.b, pixel.g, pixel.r, pixel.a));
+}
+
+// Rejects non-finite samples that would poison the accumulation buffer for
+// the rest of the run (NaNs are sticky under +=, *=).
+__device__ inline bool is_finite_vec3(const glm::vec3& v) {
+	return isfinite(v.x) && isfinite(v.y) && isfinite(v.z);
 }
 
 __device__ glm::vec3 FrameBuffer::color(const Ray& r, World* world, RandState* local_rand_state) {
@@ -67,10 +74,11 @@ __device__ glm::vec3 FrameBuffer::color(const Ray& r, World* world, RandState* l
 		}
 
 		HitRecord rec;
-		if (world->hit(cur_ray, 0.001f, FLT_MAX, rec)) {
+		if (world->hit(cur_ray, T_SELF_INTERSECT, FLT_MAX, rec)) {
 			// Only count emission if not already handled by NEE on previous bounce
 			if (count_emission) {
-				accumulated_color += cur_attenuation * rec.mat_ptr->emitted(rec.u, rec.v, rec.p);
+				glm::vec3 emit = cur_attenuation * rec.mat_ptr->emitted(rec.u, rec.v, rec.p);
+				if (is_finite_vec3(emit)) accumulated_color += emit;
 			}
 
 			Ray scattered;
@@ -97,11 +105,13 @@ __device__ glm::vec3 FrameBuffer::color(const Ray& r, World* world, RandState* l
 						if (cos_theta_surface > 0.0f && cos_theta_light > 0.0f) {
 							Ray shadow_ray(rec.p, to_light_dir);
 							HitRecord shadow_rec;
-							bool occluded = world->hit(shadow_ray, 0.001f, dist - 0.001f, shadow_rec);
+							bool occluded = world->hit(shadow_ray, T_SELF_INTERSECT,
+								dist - T_SELF_INTERSECT, shadow_rec);
 
 							if (!occluded) {
 								HitRecord light_rec;
-								if (light->hit(Ray(rec.p, to_light_dir), 0.001f, dist + 0.01f, light_rec)) {
+								if (light->hit(Ray(rec.p, to_light_dir), T_SELF_INTERSECT,
+										dist + 0.01f, light_rec)) {
 									glm::vec3 Le = light_rec.mat_ptr->emitted(
 										light_rec.u, light_rec.v, light_rec.p);
 
@@ -112,7 +122,9 @@ __device__ glm::vec3 FrameBuffer::color(const Ray& r, World* world, RandState* l
 										* light_area
 										* (float)world->num_lights;
 
-									accumulated_color += cur_attenuation * nee;
+									glm::vec3 nee_contrib = cur_attenuation * nee;
+									if (is_finite_vec3(nee_contrib))
+										accumulated_color += nee_contrib;
 								}
 							}
 						}
@@ -123,6 +135,7 @@ __device__ glm::vec3 FrameBuffer::color(const Ray& r, World* world, RandState* l
 				}
 
 				cur_attenuation *= attenuation;
+				if (!is_finite_vec3(cur_attenuation)) return accumulated_color;
 				cur_ray = scattered;
 			}
 			else {
