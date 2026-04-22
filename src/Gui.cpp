@@ -180,11 +180,13 @@ void Gui::draw_render_params(Window& app) {
     if (!ImGui::CollapsingHeader("Render Parameters", ImGuiTreeNodeFlags_DefaultOpen))
         return;
 
-    ImGui::SliderInt("Samples", &app.samples, 1, 128);
-    ImGui::SliderInt("Max Depth", &app.max_depth, 1, 100);
+    RenderParams& params = app.render_params();
 
-    if (ImGui::SliderFloat("FOV", &app.fov, 10.0f, 170.0f)) {
-        app.renderer().camera_info.fov = app.fov;
+    ImGui::SliderInt("Samples", &params.samples, 1, 128);
+    ImGui::SliderInt("Max Depth", &params.max_depth, 1, 100);
+
+    if (ImGui::SliderFloat("FOV", &params.fov, 10.0f, 170.0f)) {
+        app.renderer().camera_info.fov = params.fov;
         app.renderer().set_camera(
             app.renderer().camera_info.origin,
             app.renderer().camera_info.forward(),
@@ -192,11 +194,11 @@ void Gui::draw_render_params(Window& app) {
         app.reset_accumulation();
     }
 
-    ImGui::SliderInt("Tile Size", &app.tile_size, 16, 256);
+    ImGui::SliderInt("Tile Size", &params.tile_size, 16, 256);
 
-    int ps = app.preview_scale;
+    int ps = params.preview_scale;
     if (ImGui::SliderInt("Preview Scale", &ps, 1, 8)) {
-        app.preview_scale = ps < 1 ? 1 : ps;
+        params.preview_scale = ps < 1 ? 1 : ps;
     }
 
     ImGui::Spacing();

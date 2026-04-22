@@ -116,16 +116,94 @@ __global__ void create_world(thrust::device_ptr<World*> d_world, thrust::device_
 	}
 }
 
-// Rebuilds the device-side World from a POD descriptor array. Deletes the
-// previous World (cascading through the BVH or the raw object array) and
-// replaces it with a fresh one populated per-descriptor. Mesh vertex/index
-// buffers are NOT freed here — they are owned by KernelInfo and outlive
+// Per-descriptor Material+Hittable construction. Pulled out of the world-
+// build path so it can run in parallel over N threads instead of serially
+// in a single <<<1,1>>> kernel. Returns the Hittable* owning the freshly
+// allocated Material (which lives on the device heap).
+__device__ static Hittable* construct_hittable_from_desc(const DeviceObjectDesc& d) {
+	Material* mat = nullptr;
+	switch (d.material) {
+		case DeviceMaterialKind::Lambertian: {
+			Texture* albedo = nullptr;
+			if (d.use_checker) {
+				albedo = new CheckerTexture(d.checker_color1, d.checker_color2);
+			} else if (d.has_texture && d.d_texture_pixels) {
+				albedo = new ImageTexture(
+					d.d_texture_pixels, d.tex_width, d.tex_height, d.tex_channels);
+			} else {
+				albedo = new SolidColor(d.albedo);
+			}
+
+			Texture* normal = nullptr;
+			if (d.has_normal && d.d_normal_pixels) {
+				normal = new ImageTexture(d.d_normal_pixels, d.normal_width, d.normal_height, d.normal_channels);
+			}
+
+			Texture* specular = nullptr;
+			if (d.has_specular && d.d_specular_pixels) {
+				specular = new ImageTexture(d.d_specular_pixels, d.specular_width, d.specular_height, d.specular_channels);
+			}
+
+			mat = new Lambertian(albedo, normal, specular);
+			break;
+		}
+		case DeviceMaterialKind::Metal:
+			mat = new Metal(d.albedo, d.fuzz);
+			break;
+		case DeviceMaterialKind::Dielectric:
+			mat = new Dielectric(d.ior);
+			break;
+		case DeviceMaterialKind::Emissive:
+			mat = new Emissive(d.emission);
+			break;
+		case DeviceMaterialKind::SubsurfaceScattering:
+			mat = new SubsurfaceScatter(d.albedo, d.scattering_distance, d.ior, d.extinction_coeff);
+			break;
+	}
+
+	switch (d.kind) {
+		case DeviceObjectKind::Sphere:
+			return new Sphere(d.center, d.radius, mat);
+		case DeviceObjectKind::Triangle:
+			return new Triangle(d.v0, d.v1, d.v2, mat);
+		case DeviceObjectKind::Rect:
+			return new Rect(d.rect_Q, d.rect_u, d.rect_v, mat);
+		case DeviceObjectKind::Disc:
+			return new Disc(d.disc_center, d.disc_normal, d.disc_radius, mat);
+		case DeviceObjectKind::Mesh:
+			return new TriangleMesh(d.d_mesh_vertices, d.d_mesh_normals, d.d_mesh_uvs, d.mesh_vcount,
+			                         d.d_mesh_indices, d.mesh_icount,
+			                         d.mesh_translate, d.mesh_scale,
+			                         mat,
+			                         d.mesh_aabb_min, d.mesh_aabb_max,
+			                         d.d_mesh_bvh_nodes, d.mesh_bvh_node_count,
+			                         d.d_mesh_reordered_tri_ids, d.mesh_tri_id_count);
+	}
+	return nullptr;
+}
+
+// Constructs all scene objects in parallel — one thread per descriptor.
+// Each thread independently device-`new`s its Material + Hittable and
+// stores the result in out[tid]. The subsequent assemble_world kernel
+// collects these into a World and builds the top-level BVH serially.
+__global__ void construct_objects_parallel(DeviceObjectDesc* descs, int count,
+                                           Hittable** out) {
+	int i = threadIdx.x + blockIdx.x * blockDim.x;
+	if (i >= count) return;
+	out[i] = construct_hittable_from_desc(descs[i]);
+}
+
+// Serial tail of the world-rebuild path. Tears down the previous World
+// (cascading through the BVH or the raw object array), allocates a fresh
+// one populated from pre-constructed `objects`, and builds the top-level
+// BVH. Mesh vertex/index buffers are owned by KernelInfo and outlive
 // individual rebuilds.
-__global__ void build_world_from_desc(thrust::device_ptr<World*> d_world,
-                                      DeviceObjectDesc* descs, int count) {
+__global__ void assemble_world(thrust::device_ptr<World*> d_world,
+                               Hittable** objects,
+                               DeviceObjectDesc* descs,
+                               int count) {
 	if (threadIdx.x != 0 || blockIdx.x != 0) return;
 
-	// Tear down the previous world (BVH + hittables + their materials).
 	if (*d_world) {
 		delete *d_world;
 	}
@@ -135,75 +213,10 @@ __global__ void build_world_from_desc(thrust::device_ptr<World*> d_world,
 	*d_world = world;
 
 	for (int i = 0; i < count; i++) {
-		const DeviceObjectDesc& d = descs[i];
-
-		Material* mat = nullptr;
-		switch (d.material) {
-			case DeviceMaterialKind::Lambertian: {
-				Texture* albedo = nullptr;
-				if (d.use_checker) {
-					albedo = new CheckerTexture(d.checker_color1, d.checker_color2);
-				} else if (d.has_texture && d.d_texture_pixels) {
-					albedo = new ImageTexture(
-						d.d_texture_pixels, d.tex_width, d.tex_height, d.tex_channels);
-				} else {
-					albedo = new SolidColor(d.albedo);
-				}
-				
-				Texture* normal = nullptr;
-				if (d.has_normal && d.d_normal_pixels) {
-					normal = new ImageTexture(d.d_normal_pixels, d.normal_width, d.normal_height, d.normal_channels);
-				}
-
-				Texture* specular = nullptr;
-				if (d.has_specular && d.d_specular_pixels) {
-					specular = new ImageTexture(d.d_specular_pixels, d.specular_width, d.specular_height, d.specular_channels);
-				}
-
-				mat = new Lambertian(albedo, normal, specular);
-				break;
-			}
-			case DeviceMaterialKind::Metal:
-				mat = new Metal(d.albedo, d.fuzz);
-				break;
-			case DeviceMaterialKind::Dielectric:
-				mat = new Dielectric(d.ior);
-				break;
-			case DeviceMaterialKind::Emissive:
-				mat = new Emissive(d.emission);
-				break;
-			case DeviceMaterialKind::SubsurfaceScattering:
-				mat = new SubsurfaceScatter(d.albedo, d.scattering_distance, d.ior, d.extinction_coeff);
-				break;
-		}
-
-		Hittable* h = nullptr;
-		switch (d.kind) {
-			case DeviceObjectKind::Sphere:
-				h = new Sphere(d.center, d.radius, mat);
-				break;
-			case DeviceObjectKind::Triangle:
-				h = new Triangle(d.v0, d.v1, d.v2, mat);
-				break;
-			case DeviceObjectKind::Rect:
-				h = new Rect(d.rect_Q, d.rect_u, d.rect_v, mat);
-				break;
-			case DeviceObjectKind::Disc:
-				h = new Disc(d.disc_center, d.disc_normal, d.disc_radius, mat);
-				break;
-			case DeviceObjectKind::Mesh:
-				h = new TriangleMesh(d.d_mesh_vertices, d.d_mesh_normals, d.d_mesh_uvs, d.mesh_vcount,
-				                     d.d_mesh_indices, d.mesh_icount,
-				                     d.mesh_translate, d.mesh_scale,
-				                     mat,
-				                     d.mesh_aabb_min, d.mesh_aabb_max,
-				                     d.d_mesh_bvh_nodes, d.mesh_bvh_node_count,
-				                     d.d_mesh_reordered_tri_ids, d.mesh_tri_id_count);
-				break;
-		}
-
+		Hittable* h = objects[i];
+		if (!h) continue;
 		world->add(h);
-		if (d.is_light) world->add_light(h);
+		if (descs[i].is_light) world->add_light(h);
 	}
 
 	curandState rand_state;
@@ -458,6 +471,12 @@ KernelInfo::~KernelInfo() {
 		cudaFree(d_desc_buffer);
 		d_desc_buffer = nullptr;
 		d_desc_buffer_capacity = 0;
+	}
+
+	if (d_object_ptr_buffer) {
+		cudaFree(d_object_ptr_buffer);
+		d_object_ptr_buffer = nullptr;
+		d_object_ptr_buffer_capacity = 0;
 	}
 
 	// Release any cached mesh vertex/index buffers. These are owned by
@@ -823,9 +842,32 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 		check_cuda_errors(cudaMemcpy(d_desc_buffer, descs.data(),
 		                             sizeof(DeviceObjectDesc) * count,
 		                             cudaMemcpyHostToDevice));
+
+		// Grow the reused Hittable* output buffer when the scene has more
+		// objects than any prior scene.
+		if (count > d_object_ptr_buffer_capacity) {
+			if (d_object_ptr_buffer) {
+				check_cuda_errors(cudaFree(d_object_ptr_buffer));
+			}
+			check_cuda_errors(cudaMalloc(&d_object_ptr_buffer,
+				sizeof(Hittable*) * count));
+			d_object_ptr_buffer_capacity = count;
+		}
+
+		// Parallel per-descriptor object construction. A 1D grid with one
+		// thread per descriptor is enough for typical scenes (~dozens of
+		// objects). Block size of 64 is a conservative choice that works
+		// well across GPUs without needing scene-size-dependent tuning.
+		int block = 64;
+		int grid = (count + block - 1) / block;
+		construct_objects_parallel<<<grid, block>>>(d_desc_buffer, count,
+		                                             d_object_ptr_buffer);
+		check_cuda_errors(cudaGetLastError());
 	}
 
-	build_world_from_desc<<<1, 1>>>(d_world, d_desc_buffer, count);
+	// Even with count==0 we still need to swap in a fresh empty World so the
+	// renderer isn't pointing at stale state.
+	assemble_world<<<1, 1>>>(d_world, d_object_ptr_buffer, d_desc_buffer, count);
 	check_cuda_errors(cudaGetLastError());
 	check_cuda_errors(cudaDeviceSynchronize());
 }

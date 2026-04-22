@@ -164,6 +164,12 @@ struct KernelInfo {
     DeviceObjectDesc* d_desc_buffer = nullptr;
     int               d_desc_buffer_capacity = 0;
 
+    // Reused device buffer of Hittable* produced by the parallel
+    // construction kernel and consumed by the assembly kernel. Grown on
+    // demand, freed in the destructor.
+    Hittable** d_object_ptr_buffer = nullptr;
+    int        d_object_ptr_buffer_capacity = 0;
+
     KernelInfo() {}
     ~KernelInfo();
     KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int samples, int max_depth, float fov);

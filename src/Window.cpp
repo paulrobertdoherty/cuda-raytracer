@@ -6,16 +6,13 @@
 
 #include "Rasterizer.h"
 
-Window::Window(unsigned int width, unsigned int height, int samples, int max_depth, float fov, int tile_size, int preview_scale, std::string obj_path, std::string texture_path) {
+Window::Window(unsigned int width, unsigned int height, const RenderParams& params, std::string obj_path, std::string texture_path) {
 	Window::width = width;
 	Window::height = height;
 	Window::_window_width = width;
 	Window::_window_height = height;
-	Window::samples = samples;
-	Window::max_depth = max_depth;
-	Window::fov = fov;
-	Window::tile_size = tile_size;
-	Window::preview_scale = preview_scale < 1 ? 1 : preview_scale;
+	Window::_params = params;
+	if (Window::_params.preview_scale < 1) Window::_params.preview_scale = 1;
 	Window::_frame_count = 1;
 	Window::_camera_moving = false;
 	Window::_render_mode = RenderMode::PREVIEW;
@@ -188,7 +185,7 @@ int Window::init_quad() {
 	_blit_quad->make_FBO();
 
 	_current_frame = std::make_unique<Quad>(Window::width, Window::height);
-	_current_frame->cuda_init(samples, max_depth, fov);
+	_current_frame->cuda_init(_params.samples, _params.max_depth, _params.fov);
 	_current_frame->make_FBO();
 
 	_accum_frame = std::make_unique<Quad>(Window::width, Window::height);
@@ -459,6 +456,7 @@ void Window::tick_render() {
 		// Tiled progressive rendering: render one tile at a time, displaying
 		// each tile as it completes so the image "paints in" progressively.
 		bool aborted = false;
+		const int tile_size = _params.tile_size;
 		int tiles_x = (width + tile_size - 1) / tile_size;
 		int tiles_y = (height + tile_size - 1) / tile_size;
 
@@ -473,7 +471,7 @@ void Window::tick_render() {
 				_current_frame->_renderer->map_pbo();
 
 				// Launch kernel for just this tile
-				_current_frame->_renderer->render_tile(tile_ox, tile_oy, tile_w, tile_h, samples);
+				_current_frame->_renderer->render_tile(tile_ox, tile_oy, tile_w, tile_h, _params.samples);
 
 				// Unmap PBO so OpenGL can read from it
 				_current_frame->_renderer->unmap_pbo();
@@ -541,7 +539,7 @@ void Window::tick_render() {
 			// applies from the very first frame instead of only kicking in
 			// once the user has wiggled the camera.
 			bool fresh = _camera_moving || _frame_count <= 1;
-			int active_scale = (fresh && preview_scale > 1) ? preview_scale : 1;
+			int active_scale = (fresh && _params.preview_scale > 1) ? _params.preview_scale : 1;
 
 			// Match the viewport to the render framebuffer size so the
 			// full-screen quad drawn into _current_frame / _accum_frame

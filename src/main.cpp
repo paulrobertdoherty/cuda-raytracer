@@ -3,6 +3,7 @@
 #include "Window.h"
 #endif
 #include "raytracer/kernel.h"
+#include "RenderParams.h"
 #include "Scene.h"
 #include "cuda_errors.h"
 
@@ -71,11 +72,7 @@ static int run(int argc, char* argv[])
 {
 	int width = 800;
 	int height = 600;
-	int samples = 3;
-	int max_depth = 50;
-	float fov = 90.0f;
-	int tile_size = DEFAULT_TILE_SIZE;
-	int preview_scale = 1;
+	RenderParams params;
 	std::string obj_path;
 	std::string texture_path;
 #ifdef HEADLESS_BUILD
@@ -95,16 +92,16 @@ static int run(int argc, char* argv[])
 		} else if (arg == "--height" && i + 1 < argc) {
 			height = std::atoi(argv[++i]);
 		} else if (arg == "--samples" && i + 1 < argc) {
-			samples = std::atoi(argv[++i]);
+			params.samples = std::atoi(argv[++i]);
 		} else if (arg == "--depth" && i + 1 < argc) {
-			max_depth = std::atoi(argv[++i]);
+			params.max_depth = std::atoi(argv[++i]);
 		} else if (arg == "--fov" && i + 1 < argc) {
-			fov = std::atof(argv[++i]);
+			params.fov = std::atof(argv[++i]);
 		} else if (arg == "--tile-size" && i + 1 < argc) {
-			tile_size = std::atoi(argv[++i]);
+			params.tile_size = std::atoi(argv[++i]);
 		} else if (arg == "--preview-scale" && i + 1 < argc) {
-			preview_scale = std::atoi(argv[++i]);
-			if (preview_scale < 1) preview_scale = 1;
+			params.preview_scale = std::atoi(argv[++i]);
+			if (params.preview_scale < 1) params.preview_scale = 1;
 		} else if (arg == "--obj" && i + 1 < argc) {
 			obj_path = argv[++i];
 		} else if (arg == "--texture" && i + 1 < argc) {
@@ -132,7 +129,7 @@ static int run(int argc, char* argv[])
 	}
 
 	std::cout << "Headless render: " << width << "x" << height
-	          << ", " << samples << " spp, depth " << max_depth << std::endl;
+	          << ", " << params.samples << " spp, depth " << params.max_depth << std::endl;
 
 	// Create the scene
 	Scene scene;
@@ -146,7 +143,7 @@ static int run(int argc, char* argv[])
 	}
 
 	// Create headless renderer
-	KernelInfo renderer(width, height, samples, max_depth, fov);
+	KernelInfo renderer(width, height, params.samples, params.max_depth, params.fov);
 
 	// Set camera
 	glm::vec3 forward = glm::normalize(camera_target - camera_pos);
@@ -176,8 +173,7 @@ static int run(int argc, char* argv[])
 
 	return 0;
 #else
-	Window window(width, height, samples, max_depth, fov, tile_size, preview_scale,
-		obj_path, texture_path);
+	Window window(width, height, params, obj_path, texture_path);
 
 	return window.init();
 #endif

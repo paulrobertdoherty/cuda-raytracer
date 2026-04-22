@@ -11,6 +11,7 @@
 #include "Quad.h"
 #include "Input.h"
 #include "Rasterizer.h"
+#include "RenderParams.h"
 #include "Scene.h"
 #include "Gui.h"
 #include "raytracer/kernel.h"
@@ -24,13 +25,13 @@ public:
 	// Render viewport size (the area the ray tracer renders into).
 	unsigned int width;
 	unsigned int height;
-	int samples;
-	int max_depth;
-	float fov;
-	int tile_size;
-	int preview_scale;
 
-	Window(unsigned int width, unsigned int height, int samples, int max_depth, float fov, int tile_size = DEFAULT_TILE_SIZE, int preview_scale = 1, std::string obj_path = "", std::string texture_path = "");
+	Window(unsigned int width, unsigned int height, const RenderParams& params, std::string obj_path = "", std::string texture_path = "");
+
+	// Interactive tuning knobs. Returned by reference so ImGui widgets can
+	// bind to the fields directly; Window picks up changes on the next tick.
+	RenderParams& render_params() { return _params; }
+	const RenderParams& render_params() const { return _params; }
 
 	int init();
 	void destroy();
@@ -92,6 +93,7 @@ private:
 	int init_framebuffer();
 	int init_quad();
 
+	RenderParams _params;
 	Input _input;
 	int _frame_count;
 	bool _camera_moving;
