@@ -37,6 +37,8 @@ file(GLOB_RECURSE HEADER_FILES
 if(HEADLESS)
 	# Exclude OpenGL-dependent source files from headless builds
 	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/Window\\.cpp$")
+	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/RenderLoop\\.cpp$")
+	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/InputHandler\\.cpp$")
 	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/Quad\\.cpp$")
 	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/Rasterizer\\.cpp$")
 	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/Input\\.cpp$")

@@ -1,5 +1,7 @@
+#include <glad/gl.h>
 #include "Gui.h"
 #include "Window.h"
+#include "Scene.h"
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
