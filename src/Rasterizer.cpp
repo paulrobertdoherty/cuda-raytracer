@@ -77,9 +77,9 @@ void Rasterizer::build_sphere_mesh(int slices, int stacks) {
 
 	glBindVertexArray(_sphere_vao);
 	glBindBuffer(GL_ARRAY_BUFFER, _sphere_vbo);
-	glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_STATIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(verts.size() * sizeof(float)), verts.data(), GL_STATIC_DRAW);
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, _sphere_ibo);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(indices.size() * sizeof(unsigned int)), indices.data(), GL_STATIC_DRAW);
 	glEnableVertexAttribArray(0);
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
 	glBindVertexArray(0);
@@ -187,7 +187,7 @@ void Rasterizer::render(const CameraInfo& cam, float aspect) {
 			const int SEGS = 32;
 			const float pi = 3.14159265358979323846f;
 			std::vector<float> fan;
-			fan.reserve((SEGS + 2) * 3);
+			fan.reserve(static_cast<size_t>(SEGS + 2) * 3);
 			// center
 			fan.push_back(p.center.x); fan.push_back(p.center.y); fan.push_back(p.center.z);
 			for (int s = 0; s <= SEGS; s++) {
@@ -195,7 +195,7 @@ void Rasterizer::render(const CameraInfo& cam, float aspect) {
 				glm::vec3 pt = p.center + p.radius * (cosf(angle) * t + sinf(angle) * bt);
 				fan.push_back(pt.x); fan.push_back(pt.y); fan.push_back(pt.z);
 			}
-			glBufferData(GL_ARRAY_BUFFER, fan.size() * sizeof(float), fan.data(), GL_DYNAMIC_DRAW);
+			glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(fan.size() * sizeof(float)), fan.data(), GL_DYNAMIC_DRAW);
 			glDrawArrays(GL_TRIANGLE_FAN, 0, SEGS + 2);
 		}
 	}

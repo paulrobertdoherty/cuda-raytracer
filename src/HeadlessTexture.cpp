@@ -18,13 +18,13 @@ bool HeadlessTexture::load(const std::string& path) {
 	unsigned char* data = stbi_load(path.c_str(), &_width, &_height, &_channels, 0);
 	if (!data) {
 		std::cerr << "[HeadlessTexture] stbi_load failed for " << path
-		          << ": " << stbi_failure_reason() << std::endl;
+		          << ": " << stbi_failure_reason() << "\n";
 		return false;
 	}
 
 	_pixels = data;
 
 	std::cout << "[HeadlessTexture] Loaded " << path << " — "
-	          << _width << "x" << _height << " (" << _channels << " channels)" << std::endl;
+	          << _width << "x" << _height << " (" << _channels << " channels)" << "\n";
 	return true;
 }

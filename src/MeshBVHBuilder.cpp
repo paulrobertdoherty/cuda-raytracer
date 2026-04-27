@@ -119,11 +119,11 @@ static SplitResult sah_binned_split(
             if (left_count[i] == 0 || right_count[i] == 0) continue;
             float lsa = surface_area(left_min[i], left_max[i]);
             float rsa = surface_area(right_min[i], right_max[i]);
-            float cost = (left_count[i] * lsa + right_count[i] * rsa) / parent_sa;
+            float cost = (static_cast<float>(left_count[i]) * lsa + static_cast<float>(right_count[i]) * rsa) / parent_sa;
             if (cost < best_cost) {
                 best_cost = cost;
                 best.axis = axis;
-                best.pos = axis_min + (i + 1) * bin_width;
+                best.pos = axis_min + static_cast<float>(i + 1) * bin_width;
                 best.found = true;
             }
         }

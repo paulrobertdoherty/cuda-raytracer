@@ -13,7 +13,7 @@
 
 #include <memory>
 
-Quad::Quad(unsigned int width, unsigned int height) {
+Quad::Quad(int width, int height) {
     this->width = width;
     this->height = height;
 
@@ -37,7 +37,7 @@ Quad::Quad(unsigned int width, unsigned int height) {
     // bind reference to buffer on gpu
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
     // copy vertex data to buffer on gpu
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(float)), vertices.data(), GL_STATIC_DRAW);
 
     // set our vertex attributes pointers
     glEnableVertexAttribArray(0);
@@ -51,7 +51,7 @@ Quad::Quad(unsigned int width, unsigned int height) {
 
     glGenBuffers(1, &PBO);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, PBO);
-    glBufferData(GL_PIXEL_UNPACK_BUFFER, width * height * 4, NULL, GL_DYNAMIC_COPY);
+    glBufferData(GL_PIXEL_UNPACK_BUFFER, static_cast<GLsizeiptr>(width) * height * 4, nullptr, GL_DYNAMIC_COPY);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 
     glEnable(GL_TEXTURE_2D);
@@ -66,7 +66,7 @@ Quad::Quad(unsigned int width, unsigned int height) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
@@ -95,7 +95,7 @@ void Quad::render_kernel(bool camera_moving, int pixelate) {
     _renderer->render(camera_moving, pixelate);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, this->PBO);
     glBindTexture(GL_TEXTURE_2D, this->texture);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
 }
 
 void Quad::upload_tile(int x, int y, int w, int h) {
@@ -117,16 +117,16 @@ void Quad::upload_tile(int x, int y, int w, int h) {
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 }
 
-void Quad::resize(unsigned int width, unsigned int height) {
+void Quad::resize(int width, int height) {
     this->width = width;
     this->height = height;
 
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, PBO);
-    glBufferData(GL_PIXEL_UNPACK_BUFFER, width * height * 4, NULL, GL_DYNAMIC_COPY);
+    glBufferData(GL_PIXEL_UNPACK_BUFFER, static_cast<GLsizeiptr>(width) * height * 4, nullptr, GL_DYNAMIC_COPY);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 
     glBindTexture(GL_TEXTURE_2D, texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
     glBindTexture(GL_TEXTURE_2D, 0);
 
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);

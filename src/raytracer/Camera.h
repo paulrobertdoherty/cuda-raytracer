@@ -21,7 +21,7 @@ public:
 
 	__host__ __device__ Camera(glm::vec3 origin, glm::vec3 forward, glm::vec3 up, float vfov, float aspect_ratio) {
 		float theta = degrees_to_radians(vfov);
-		float h = tan(theta / 2.0f);
+		float h = tanf(theta / 2.0f);
 		viewport_height = 2.0f * h;
 		viewport_width = aspect_ratio * viewport_height;
 
@@ -31,7 +31,7 @@ public:
 
 		horizontal = viewport_width * u;
 		vertical = viewport_height * v;
-		origin = origin;
+		this->origin = origin;
 		lower_left_corner = origin - horizontal / 2.0f - vertical / 2.0f - w;
 	}
 
@@ -101,8 +101,8 @@ struct CameraInfo { // used to pass all necessary information to the gpu to cons
 			up = glm::vec3(0.0f, 1.0f, 0.0f);
 		}
 		else {
-			forward = glm::vec3(-cos(A) * sin(B) * cos(C) + sin(A) * sin(C), cos(A) * sin(B) * sin(C) + sin(A) * cos(C), cos(A) * cos(B));
-			up = glm::vec3(sin(A) * sin(B) * cos(C) + cos(A) * sin(C), -sin(A) * sin(B) * sin(C) + cos(A) * cos(C), -sin(A) * cos(B));
+			forward = glm::vec3(-cosf(A) * sinf(B) * cosf(C) + sinf(A) * sinf(C), cosf(A) * sinf(B) * sinf(C) + sinf(A) * cosf(C), cosf(A) * cosf(B));
+			up = glm::vec3(sinf(A) * sinf(B) * cosf(C) + cosf(A) * sinf(C), -sinf(A) * sinf(B) * sinf(C) + cosf(A) * cosf(C), -sinf(A) * cosf(B));
 		}
 
 		return new Camera(origin, forward, up, fov, width / height);

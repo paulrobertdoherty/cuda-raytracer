@@ -21,15 +21,15 @@ public:
 
 	cudaGraphicsResource_t CGR;
 
-	unsigned int width, height;
+	int width, height;
 
 	std::vector<float> vertices;
-	Quad(unsigned int width, unsigned int height);
+	Quad(int width, int height);
 
 	void cuda_init(int samples, int max_depth, float fov);
 	void cuda_destroy();
 	void render_kernel(bool camera_moving, int pixelate = 1);
 	void upload_tile(int x, int y, int w, int h);
-	void resize(unsigned int width, unsigned int height);
+	void resize(int width, int height);
 	void make_FBO();
 };

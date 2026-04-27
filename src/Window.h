@@ -23,10 +23,10 @@ enum class RenderMode { PREVIEW, RENDER_FINAL, IDLE };
 class Window {
 public:
 	// Render viewport size (the area the ray tracer renders into).
-	unsigned int width;
-	unsigned int height;
+	int width;
+	int height;
 
-	Window(unsigned int width, unsigned int height, const RenderParams& params, std::string obj_path = "", std::string texture_path = "");
+	Window(int width, int height, const RenderParams& params, std::string obj_path = "", std::string texture_path = "");
 
 	// Interactive tuning knobs. Returned by reference so ImGui widgets can
 	// bind to the fields directly; Window picks up changes on the next tick.
@@ -35,7 +35,7 @@ public:
 
 	int init();
 	void destroy();
-	void resize(unsigned int width, unsigned int height);
+	void resize(int width, int height);
 
 	// Called from GLFW callbacks (which only have a GLFWwindow*, so we look
 	// the Window up via glfwGetWindowUserPointer).
@@ -54,11 +54,11 @@ public:
 	void start_final_render();
 
 	// Full GLFW framebuffer dimensions.
-	unsigned int window_width() const { return _window_width; }
-	unsigned int window_height() const { return _window_height; }
+	int window_width() const { return _window_width; }
+	int window_height() const { return _window_height; }
 
 	// Called by the GLFW framebuffer-size callback when the window is resized.
-	void on_framebuffer_resize(unsigned int w, unsigned int h);
+	void on_framebuffer_resize(int w, int h);
 
 	// Recompute the render viewport from the full window size and panel state.
 	// Called after window resize, GUI toggle, or panel-side change.
@@ -70,8 +70,8 @@ public:
 private:
 	GLFWwindow* _window;
 
-	unsigned int _window_width;
-	unsigned int _window_height;
+	int _window_width;
+	int _window_height;
 	int _viewport_x = 0;
 
 	ShaderManager _shaders;

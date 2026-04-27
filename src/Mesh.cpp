@@ -34,12 +34,12 @@ void Mesh::upload() {
 	glBindVertexArray(_vao);
 	glBindBuffer(GL_ARRAY_BUFFER, _vbo);
 	glBufferData(GL_ARRAY_BUFFER,
-		vertices.size() * sizeof(MeshVertex),
+		static_cast<GLsizeiptr>(vertices.size() * sizeof(MeshVertex)),
 		vertices.data(), GL_STATIC_DRAW);
 
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, _ebo);
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-		indices.size() * sizeof(unsigned int),
+		static_cast<GLsizeiptr>(indices.size() * sizeof(unsigned int)),
 		indices.data(), GL_STATIC_DRAW);
 
 	// layout(location=0) vec3 aPos

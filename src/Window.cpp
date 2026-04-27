@@ -6,7 +6,7 @@
 
 #include "Rasterizer.h"
 
-Window::Window(unsigned int width, unsigned int height, const RenderParams& params, std::string obj_path, std::string texture_path) {
+Window::Window(int width, int height, const RenderParams& params, std::string obj_path, std::string texture_path) {
 	Window::width = width;
 	Window::height = height;
 	Window::_window_width = width;
@@ -27,7 +27,7 @@ Window::Window(unsigned int width, unsigned int height, const RenderParams& para
 }
 
 static void glfw_error_callback(int code, const char* description) {
-	std::cerr << "[GLFW error " << code << "] " << description << std::endl;
+	std::cerr << "[GLFW error " << code << "] " << description << "\n";
 }
 
 static void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
@@ -37,18 +37,19 @@ static void mouse_button_callback(GLFWwindow* window, int button, int action, in
 
 int Window::init_glfw() {
 	glfwSetErrorCallback(glfw_error_callback);
-#if defined(__linux__)
+#if defined(__linux__) && defined(GLFW_PLATFORM)
 	// On Wayland sessions, GLFW's Wayland/EGL backend binds to the Mesa EGL
 	// implementation on the integrated GPU and ignores __NV_PRIME_RENDER_OFFLOAD,
 	// so cudaGraphicsGLRegisterBuffer fails (or no window appears at all).
 	// Force the X11 backend so we go through XWayland + GLX, which honors PRIME
 	// offload and lets the GL context live on the NVIDIA dGPU alongside CUDA.
+	// Guarded on GLFW_PLATFORM (added in GLFW 3.4) so builds against 3.3 still link.
 	glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
 #endif
 
 	// Initialize and configure GLFW
 	if (!glfwInit()) {
-		std::cout << "Failed to initialize GLFW" << std::endl;
+		std::cout << "Failed to initialize GLFW" << "\n";
 		return -1;
 	}
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
@@ -59,7 +60,7 @@ int Window::init_glfw() {
 	glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);
 
 	// Initialize and create window for GLFW
-	_window = glfwCreateWindow(Window::width, Window::height, "A CUDA ray tracer", NULL, NULL);
+	_window = glfwCreateWindow(Window::width, Window::height, "A CUDA ray tracer", nullptr, nullptr);
 
 	// The GUI starts visible so the cursor must be shown. When the user
 	// hides the GUI (G key), the cursor will be captured for fly mode.
@@ -73,8 +74,8 @@ int Window::init_glfw() {
 	glfwSetMouseButtonCallback(_window, mouse_button_callback);
 
 	// Check if window was created
-	if (_window == NULL) {
-		std::cout << "Failed to create GLFW window" << std::endl;
+	if (_window == nullptr) {
+		std::cout << "Failed to create GLFW window" << "\n";
 		glfwTerminate();
 		return -1;
 	}
@@ -92,14 +93,14 @@ int Window::init_glad() {
 	// Initialize GLAD before calling any OpenGL function
 	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
 	{
-		std::cout << "Failed to initialize GLAD" << std::endl;
+		std::cout << "Failed to initialize GLAD" << "\n";
 		return -1;
 	}
 
 	return 0;
 }
 
-void Window::resize(unsigned int w, unsigned int h) {
+void Window::resize(int w, int h) {
 	if (w == this->width && h == this->height) return;
 	if (w == 0 || h == 0) return;
 
@@ -123,14 +124,14 @@ void Window::resize(unsigned int w, unsigned int h) {
 }
 
 void Window::update_viewport() {
-	unsigned int render_w = _window_width;
+	int render_w = _window_width;
 	int vp_x = 0;
 
 	if (_gui && _gui->visible()) {
-		unsigned int pw = (unsigned int)_gui->panel_width();
+		int pw = _gui->panel_width();
 		if (pw >= _window_width) pw = _window_width / 2;
 		render_w = _window_width - pw;
-		vp_x = _gui->panel_on_right() ? 0 : (int)pw;
+		vp_x = _gui->panel_on_right() ? 0 : pw;
 	}
 
 	_viewport_x = vp_x;
@@ -139,10 +140,10 @@ void Window::update_viewport() {
 
 void framebuffer_size_callback(GLFWwindow* window, int w, int h) {
 	Window* myWindow = reinterpret_cast<Window*>(glfwGetWindowUserPointer(window));
-	myWindow->on_framebuffer_resize((unsigned int)w, (unsigned int)h);
+	myWindow->on_framebuffer_resize(w, h);
 }
 
-void Window::on_framebuffer_resize(unsigned int w, unsigned int h) {
+void Window::on_framebuffer_resize(int w, int h) {
 	_window_width = w;
 	_window_height = h;
 	update_viewport();
@@ -173,8 +174,8 @@ int Window::init_quad() {
 	{
 		int fb_w = 0, fb_h = 0;
 		glfwGetFramebufferSize(_window, &fb_w, &fb_h);
-		_window_width = (unsigned int)fb_w;
-		_window_height = (unsigned int)fb_h;
+		_window_width = fb_w;
+		_window_height = fb_h;
 		// Initial render size = full window (GUI is created later and
 		// update_viewport is called after that).
 		width = _window_width;

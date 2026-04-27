@@ -58,9 +58,9 @@ void Input::process_camera_movement(GLFWwindow* window, KernelInfo& kernelInfo, 
 	}
 
 	// pitch
-	rotation.x += y_diff * 30.0f;
+	rotation.x += static_cast<float>(y_diff * 30.0);
 	// yaw
-	rotation.y += x_diff * 30.0f;
+	rotation.y += static_cast<float>(x_diff * 30.0);
 
 	// roll
 	if (isPressed(GLFW_KEY_E)) {

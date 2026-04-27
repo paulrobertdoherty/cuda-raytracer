@@ -56,10 +56,10 @@ static std::string resolve_obj_path(const std::string& path) {
 		return candidates.front().string();
 	}
 	if (candidates.empty()) {
-		std::cerr << "[ObjLoader] '" << path << "' is a directory but contains no .obj file" << std::endl;
+		std::cerr << "[ObjLoader] '" << path << "' is a directory but contains no .obj file" << "\n";
 	} else {
-		std::cerr << "[ObjLoader] '" << path << "' contains multiple .obj files; pass one explicitly:" << std::endl;
-		for (const auto& c : candidates) std::cerr << "  " << c.string() << std::endl;
+		std::cerr << "[ObjLoader] '" << path << "' contains multiple .obj files; pass one explicitly:" << "\n";
+		for (const auto& c : candidates) std::cerr << "  " << c.string() << "\n";
 	}
 	return std::string();
 }
@@ -89,10 +89,10 @@ std::unique_ptr<Mesh> load(const std::string& path) {
 	                            mtl_basedir.empty() ? nullptr : mtl_basedir.c_str(),
 	                            true);
 	if (!warn.empty()) {
-		std::cerr << "[ObjLoader] " << warn << std::endl;
+		std::cerr << "[ObjLoader] " << warn << "\n";
 	}
 	if (!err.empty()) {
-		std::cerr << "[ObjLoader] " << err << std::endl;
+		std::cerr << "[ObjLoader] " << err << "\n";
 	}
 	if (!ok) {
 		return nullptr;
@@ -118,7 +118,7 @@ std::unique_ptr<Mesh> load(const std::string& path) {
 		const auto& mesh_data = shape.mesh;
 		size_t index_offset = 0;
 		for (size_t f = 0; f < mesh_data.num_face_vertices.size(); f++) {
-			int fv = mesh_data.num_face_vertices[f];
+			int fv = static_cast<int>(mesh_data.num_face_vertices[f]);
 			// Should always be 3 because we requested triangulation, but be safe.
 			if (fv != 3) { index_offset += fv; continue; }
 
@@ -175,7 +175,7 @@ std::unique_ptr<Mesh> load(const std::string& path) {
 
 	std::cout << "[ObjLoader] Loaded " << resolved << " — "
 	          << mesh->vertices.size() << " vertices, "
-	          << mesh->indices.size() / 3 << " triangles" << std::endl;
+	          << mesh->indices.size() / 3 << " triangles" << "\n";
 	return mesh;
 }
 

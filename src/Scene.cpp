@@ -37,33 +37,6 @@ SceneObject make_sphere(const glm::vec3& center, float radius, const glm::vec3& 
 	return o;
 }
 
-SceneObject make_triangle(const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2,
-                          const glm::vec3& color, const glm::vec3& albedo) {
-	SceneObject o;
-	o.kind = ProxyKind::Triangle;
-	o.color = color;
-	o.v0 = v0;
-	o.v1 = v1;
-	o.v2 = v2;
-	o.albedo = albedo;
-	o.material = SceneMaterial::Lambertian;
-	return o;
-}
-
-SceneObject make_rect(const glm::vec3& Q, const glm::vec3& u, const glm::vec3& v,
-                      const glm::vec3& color, const glm::vec3& emission) {
-	SceneObject o;
-	o.kind = ProxyKind::Rect;
-	o.color = color;
-	o.Q = Q;
-	o.u = u;
-	o.v = v;
-	o.emission = emission;
-	o.material = SceneMaterial::Emissive;
-	o.is_light = true;
-	return o;
-}
-
 SceneObject make_disc(const glm::vec3& center, const glm::vec3& normal, float radius,
                       const glm::vec3& color, const glm::vec3& emission) {
 	SceneObject o;
@@ -129,7 +102,7 @@ int Scene::add_obj_from_file(const std::string& obj_path,
                               const std::string& specular_path) {
 	auto mesh = ObjLoader::load(obj_path);
 	if (!mesh) {
-		std::cerr << "[Scene] Failed to load .obj file: " << obj_path << std::endl;
+		std::cerr << "[Scene] Failed to load .obj file: " << obj_path << "\n";
 		return -1;
 	}
 	mesh->upload();
@@ -150,7 +123,7 @@ int Scene::add_obj_from_file(const std::string& obj_path,
 			tex_idx = (int)_textures.size();
 			_textures.push_back(std::move(tex));
 		} else {
-			std::cerr << "[Scene] Failed to load texture: " << actual_tex_path << std::endl;
+			std::cerr << "[Scene] Failed to load texture: " << actual_tex_path << "\n";
 		}
 	}
 
@@ -166,7 +139,7 @@ int Scene::add_obj_from_file(const std::string& obj_path,
 			normal_tex_idx = (int)_textures.size();
 			_textures.push_back(std::move(tex));
 		} else {
-			std::cerr << "[Scene] Failed to load normal texture: " << actual_normal_path << std::endl;
+			std::cerr << "[Scene] Failed to load normal texture: " << actual_normal_path << "\n";
 		}
 	}
 
@@ -182,7 +155,7 @@ int Scene::add_obj_from_file(const std::string& obj_path,
 			specular_tex_idx = (int)_textures.size();
 			_textures.push_back(std::move(tex));
 		} else {
-			std::cerr << "[Scene] Failed to load specular texture: " << actual_specular_path << std::endl;
+			std::cerr << "[Scene] Failed to load specular texture: " << actual_specular_path << "\n";
 		}
 	}
 
