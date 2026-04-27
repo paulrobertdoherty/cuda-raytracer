@@ -8,6 +8,8 @@
 #include <iostream>
 #include <unordered_map>
 #include <algorithm>
+#include <filesystem>
+#include <system_error>
 
 namespace ObjLoader {
 
@@ -33,7 +35,41 @@ struct VertexKeyHash {
 
 } // namespace
 
+// Resolves a user-supplied OBJ path. If `path` is a directory, look for a
+// single `.obj` file inside it (the common case is a model dir like
+// `backpack/` containing `backpack.obj` + textures + .mtl). Returns an empty
+// string and writes a diagnostic to stderr on ambiguous/missing cases.
+static std::string resolve_obj_path(const std::string& path) {
+	std::error_code ec;
+	if (!std::filesystem::is_directory(path, ec)) {
+		return path;
+	}
+
+	std::vector<std::filesystem::path> candidates;
+	for (const auto& entry : std::filesystem::directory_iterator(path, ec)) {
+		if (entry.is_regular_file(ec) && entry.path().extension() == ".obj") {
+			candidates.push_back(entry.path());
+		}
+	}
+
+	if (candidates.size() == 1) {
+		return candidates.front().string();
+	}
+	if (candidates.empty()) {
+		std::cerr << "[ObjLoader] '" << path << "' is a directory but contains no .obj file" << std::endl;
+	} else {
+		std::cerr << "[ObjLoader] '" << path << "' contains multiple .obj files; pass one explicitly:" << std::endl;
+		for (const auto& c : candidates) std::cerr << "  " << c.string() << std::endl;
+	}
+	return std::string();
+}
+
 std::unique_ptr<Mesh> load(const std::string& path) {
+	std::string resolved = resolve_obj_path(path);
+	if (resolved.empty()) {
+		return nullptr;
+	}
+
 	tinyobj::attrib_t attrib;
 	std::vector<tinyobj::shape_t> shapes;
 	std::vector<tinyobj::material_t> materials;
@@ -42,14 +78,14 @@ std::unique_ptr<Mesh> load(const std::string& path) {
 
 	// Extract the directory from the OBJ path so tinyobj can find the .mtl file
 	std::string mtl_basedir;
-	auto last_slash = path.find_last_of("/\\");
+	auto last_slash = resolved.find_last_of("/\\");
 	if (last_slash != std::string::npos) {
-		mtl_basedir = path.substr(0, last_slash + 1);
+		mtl_basedir = resolved.substr(0, last_slash + 1);
 	}
 
 	// triangulate=true, default_vcols_fallback=false
 	bool ok = tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err,
-	                            path.c_str(),
+	                            resolved.c_str(),
 	                            mtl_basedir.empty() ? nullptr : mtl_basedir.c_str(),
 	                            true);
 	if (!warn.empty()) {
@@ -137,7 +173,7 @@ std::unique_ptr<Mesh> load(const std::string& path) {
 		}
 	}
 
-	std::cout << "[ObjLoader] Loaded " << path << " — "
+	std::cout << "[ObjLoader] Loaded " << resolved << " — "
 	          << mesh->vertices.size() << " vertices, "
 	          << mesh->indices.size() / 3 << " triangles" << std::endl;
 	return mesh;
