@@ -31,7 +31,7 @@ struct Input {
 		last_ypos = 0;
 		has_moved = false;
 	}
-	void process_quit(GLFWwindow* window);
+	static void process_quit(GLFWwindow* window);
 	void process_camera_movement(GLFWwindow* window, KernelInfo& kernelInfo, float t_diff);
 
 	// Mouse button events arriving from the GLFW callback installed on the
@@ -46,5 +46,5 @@ struct Input {
 	                        const CameraInfo& cam,
 	                        int window_w, int window_h);
 
-	bool has_camera_moved();
+	bool has_camera_moved() const;
 };

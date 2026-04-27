@@ -88,7 +88,7 @@ private:
 	std::string _obj_path;
 	std::string _texture_path;
 
-	int init_glad();
+	static int init_glad();
 	int init_glfw();
 	int init_framebuffer();
 	int init_quad();

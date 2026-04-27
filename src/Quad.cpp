@@ -78,7 +78,7 @@ void Quad::cuda_init(int samples, int max_depth, float fov) {
     _renderer = std::make_unique<KernelInfo>(this->CGR, width, height, samples, max_depth, fov);
 }
 
-void Quad::cuda_destroy() {
+void Quad::cuda_destroy() const {
     check_cuda_errors(
         cudaGraphicsUnregisterResource(CGR));
 }
@@ -90,7 +90,7 @@ void Quad::make_FBO() {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-void Quad::render_kernel(bool camera_moving, int pixelate) {
+void Quad::render_kernel(bool camera_moving, int pixelate) const {
     glBindTexture(GL_TEXTURE_2D, 0);
     _renderer->render(camera_moving, pixelate);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, this->PBO);
@@ -98,7 +98,7 @@ void Quad::render_kernel(bool camera_moving, int pixelate) {
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
 }
 
-void Quad::upload_tile(int x, int y, int w, int h) {
+void Quad::upload_tile(int x, int y, int w, int h) const {
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, this->PBO);
     glBindTexture(GL_TEXTURE_2D, this->texture);
 

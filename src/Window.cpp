@@ -31,7 +31,7 @@ static void glfw_error_callback(int code, const char* description) {
 }
 
 static void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
-	Window* w = reinterpret_cast<Window*>(glfwGetWindowUserPointer(window));
+	auto* w = reinterpret_cast<Window*>(glfwGetWindowUserPointer(window));
 	if (w) w->on_mouse_button(button, action, mods);
 }
 
@@ -139,7 +139,7 @@ void Window::update_viewport() {
 }
 
 void framebuffer_size_callback(GLFWwindow* window, int w, int h) {
-	Window* myWindow = reinterpret_cast<Window*>(glfwGetWindowUserPointer(window));
+	auto* myWindow = reinterpret_cast<Window*>(glfwGetWindowUserPointer(window));
 	myWindow->on_framebuffer_resize(w, h);
 }
 

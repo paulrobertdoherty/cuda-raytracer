@@ -20,7 +20,7 @@ void Input::process_quit(GLFWwindow* window)
 		glfwSetWindowShouldClose(window, true);
 }
 
-bool Input::has_camera_moved() {
+bool Input::has_camera_moved() const {
 	return has_moved;
 }
 
@@ -146,7 +146,7 @@ void Input::process_camera_movement(GLFWwindow* window, KernelInfo& kernelInfo, 
 	kernelInfo.set_camera(position, forward, up);
 }
 
-void Input::on_mouse_button(int button, int action, int mods) {
+void Input::on_mouse_button(int button, int action, int  /*mods*/) {
 	if (button == GLFW_MOUSE_BUTTON_LEFT) {
 		lmb_down = (action == GLFW_PRESS);
 	}

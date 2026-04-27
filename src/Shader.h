@@ -97,7 +97,7 @@ public:
 private:
     // utility function for checking shader compilation/linking errors.
     // ------------------------------------------------------------------------
-    void check_compile_errors(GLuint shader, std::string type)
+    static void check_compile_errors(GLuint shader, std::string type)
     {
         GLint success;
         GLchar infoLog[1024];

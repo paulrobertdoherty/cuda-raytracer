@@ -61,7 +61,7 @@ static std::string resolve_obj_path(const std::string& path) {
 		std::cerr << "[ObjLoader] '" << path << "' contains multiple .obj files; pass one explicitly:" << "\n";
 		for (const auto& c : candidates) std::cerr << "  " << c.string() << "\n";
 	}
-	return std::string();
+	return {};
 }
 
 std::unique_ptr<Mesh> load(const std::string& path) {
@@ -163,7 +163,7 @@ std::unique_ptr<Mesh> load(const std::string& path) {
 					out.uv = glm::vec2(0.0f);
 				}
 
-				unsigned int new_idx = (unsigned int)mesh->vertices.size();
+				auto new_idx = (unsigned int)mesh->vertices.size();
 				mesh->vertices.push_back(out);
 				mesh->indices.push_back(new_idx);
 				index_cache[key] = new_idx;

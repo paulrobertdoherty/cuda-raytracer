@@ -44,11 +44,11 @@ void Gui::render() {
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
-bool Gui::wants_mouse() const {
+bool Gui::wants_mouse() {
     return ImGui::GetIO().WantCaptureMouse;
 }
 
-bool Gui::wants_keyboard() const {
+bool Gui::wants_keyboard() {
     // WantTextInput is true only while a text field has focus. The broader
     // WantCaptureKeyboard flag is also true whenever any ImGui window holds
     // nav focus (which the sidebar does at startup), which would incorrectly
@@ -103,9 +103,9 @@ static const char* kind_label(ProxyKind kind) {
 void Gui::draw(Window& app) {
     if (!_visible) return;
 
-    float win_w = (float)app.window_width();
-    float win_h = (float)app.window_height();
-    float pw = (float)_panel_width;
+    auto win_w = (float)app.window_width();
+    auto win_h = (float)app.window_height();
+    auto pw = (float)_panel_width;
 
     float sidebar_x = _panel_on_right ? (win_w - pw) : 0.0f;
 
@@ -553,7 +553,7 @@ void Gui::draw_file_loader(Window& app) {
 // File dialog results (rendered outside the sidebar so they float freely)
 // ---------------------------------------------------------------------------
 
-void Gui::draw_file_dialogs(Window& app) {
+void Gui::draw_file_dialogs(Window&  /*app*/) {
     if (ImGuiFileDialog::Instance()->Display("ChooseOBJ")) {
         if (ImGuiFileDialog::Instance()->IsOk()) {
             _pending_obj_path = ImGuiFileDialog::Instance()->GetFilePathName();

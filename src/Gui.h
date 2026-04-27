@@ -16,11 +16,11 @@ public:
     Gui(const Gui&) = delete;
     Gui& operator=(const Gui&) = delete;
 
-    void new_frame();
+    static void new_frame();
     void draw(Window& app);
-    void render();
-    bool wants_mouse() const;
-    bool wants_keyboard() const;
+    static void render();
+    static bool wants_mouse() ;
+    static bool wants_keyboard() ;
     bool visible() const { return _visible; }
     void toggle() { _visible = !_visible; }
 
@@ -55,11 +55,11 @@ private:
     std::string _pending_normal_path;
     std::string _pending_specular_path;
 
-    void draw_mode_indicator(Window& app);
-    void draw_render_params(Window& app);
-    void draw_scene_objects(Window& app);
+    static void draw_mode_indicator(Window& app);
+    static void draw_render_params(Window& app);
+    static void draw_scene_objects(Window& app);
     void draw_add_object(Window& app);
     void draw_file_loader(Window& app);
-    void draw_camera_info(Window& app);
+    static void draw_camera_info(Window& app);
     void draw_file_dialogs(Window& app);
 };
