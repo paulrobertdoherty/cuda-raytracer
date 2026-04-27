@@ -1,5 +1,8 @@
 cmake_minimum_required (VERSION 3.24)
 
+# Emit compile_commands.json for clang-tidy and other tooling.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # Enable Hot Reload for MSVC compilers if supported.
 if (POLICY CMP0141)
   cmake_policy(SET CMP0141 NEW)

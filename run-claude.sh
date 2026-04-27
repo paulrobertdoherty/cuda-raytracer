@@ -54,10 +54,13 @@ Container:  ${CONTAINER_DEFAULT}
 Workspace:  ${REPO_DIR} -> /workspace
 
 Persisted on host (bind-mounted):
-  ~/.claude                -> /root/.claude     (rw, auth/sessions)
-  ~/.claude.json           -> /root/.claude.json (rw, if present)
-  ~/.gitconfig             -> /root/.gitconfig   (ro, if present)
+  ~/.claude                -> /home/dev/.claude     (rw, auth/sessions)
+  ~/.claude.json           -> /home/dev/.claude.json (rw, if present)
+  ~/.gitconfig             -> /home/dev/.gitconfig   (ro, if present)
 SSH keys are intentionally NOT mounted.
+
+The container runs as user 'dev' (UID/GID matched to your host user) because
+claude --dangerously-skip-permissions refuses to run as root.
 
 Note: docker exec on a running container uses the image the container started
 with. After --rebuild or an image update, stop the container (or use --rebuild)
@@ -104,9 +107,8 @@ ensure_host_dirs() {
 image_exists() { docker image inspect "$IMAGE" >/dev/null 2>&1; }
 
 build_image() {
-  local tmp
+  local tmp rc=0
   tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
 
   cat >"$tmp/Dockerfile" <<DOCKERFILE
 FROM nvidia/cuda:${CUDA_BASE_TAG}
@@ -114,7 +116,7 @@ ENV DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC
 
 RUN apt-get update && apt-get install -y --no-install-recommends \\
       ca-certificates curl git gpg gpg-agent pkg-config build-essential \\
-      ninja-build gdb valgrind less ripgrep jq python3 python3-pip \\
+      ninja-build gdb valgrind less ripgrep jq python3 python3-pip sudo \\
  && rm -rf /var/lib/apt/lists/*
 
 # Kitware APT for cmake >= 3.24 (project requires 3.24; jammy ships 3.22).
@@ -131,12 +133,35 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \\
  && rm -rf /var/lib/apt/lists/* \\
  && npm install -g @anthropic-ai/claude-code
 
+# beads (issue tracker used by this project's CLAUDE.md workflow).
+ARG BEADS_VERSION=1.0.3
+RUN curl -fsSL "https://github.com/gastownhall/beads/releases/download/v\${BEADS_VERSION}/beads_\${BEADS_VERSION}_linux_amd64.tar.gz" \\
+      | tar -xz -C /tmp \\
+ && install -m 0755 /tmp/bd /usr/local/bin/bd \\
+ && rm -f /tmp/bd
+
+# Non-root user matching host UID/GID. claude --dangerously-skip-permissions
+# refuses to run as root. Passwordless sudo so apt-get etc. still works.
+ARG HOST_UID=1000
+ARG HOST_GID=1000
+RUN groupadd -g \${HOST_GID} dev \\
+ && useradd -m -u \${HOST_UID} -g \${HOST_GID} -s /bin/bash dev \\
+ && echo 'dev ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/dev \\
+ && chmod 0440 /etc/sudoers.d/dev
+
+USER dev
+ENV HOME=/home/dev
 WORKDIR /workspace
 CMD ["bash"]
 DOCKERFILE
 
   log "building image ${IMAGE}..."
-  docker build -t "$IMAGE" -f "$tmp/Dockerfile" "$tmp"
+  docker build \
+    --build-arg "HOST_UID=$(id -u)" \
+    --build-arg "HOST_GID=$(id -g)" \
+    -t "$IMAGE" -f "$tmp/Dockerfile" "$tmp" || rc=$?
+  rm -rf "$tmp"
+  return $rc
 }
 
 ensure_image() {
@@ -161,15 +186,15 @@ build_run_args() {
              --name "$CONTAINER"
              -v "$REPO_DIR:/workspace"
              -w /workspace
-             -v "$HOME/.claude:/root/.claude"
+             -v "$HOME/.claude:/home/dev/.claude"
              -e "TERM=${TERM:-xterm-256color}" )
 
   (( ONE_SHOT )) && RUN_ARGS+=( --rm )
 
   [[ -f "$HOME/.claude.json" ]] \
-    && RUN_ARGS+=( -v "$HOME/.claude.json:/root/.claude.json" )
+    && RUN_ARGS+=( -v "$HOME/.claude.json:/home/dev/.claude.json" )
   [[ -f "$HOME/.gitconfig" ]] \
-    && RUN_ARGS+=( -v "$HOME/.gitconfig:/root/.gitconfig:ro" )
+    && RUN_ARGS+=( -v "$HOME/.gitconfig:/home/dev/.gitconfig:ro" )
 
   local safe_flag="--dangerously-skip-permissions"
   (( SAFE )) && safe_flag=""

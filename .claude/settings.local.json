@@ -3,7 +3,12 @@
     "allow": [
       "Bash(find /c/Users/paul/Documents/Ray-Tracing/cuda-raytracer -type d -not -path */out/* -not -path */.git/*)",
       "Bash(wc:*)",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "Bash(bd create *)",
+      "Bash(bd show *)",
+      "Bash(bd ready *)",
+      "Bash(bd list *)",
+      "Bash(bd update *)"
     ]
   }
 }

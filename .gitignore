@@ -23,6 +23,9 @@ cuda-raytracer
 *.png
 *.rgba
 
+# ImGui window/dock state written next to the binary on shutdown
+imgui.ini
+
 # Session transcripts
 2026-*.txt
 

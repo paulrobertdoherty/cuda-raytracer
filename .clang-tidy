@@ -1,0 +1,27 @@
+---
+Checks: >
+  bugprone-*,
+  clang-analyzer-*,
+  cert-*,
+  misc-*,
+  -misc-no-recursion,
+  -misc-non-private-member-variables-in-classes,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  -modernize-avoid-c-arrays,
+  -modernize-use-nodiscard,
+  performance-*,
+  readability-*,
+  -readability-magic-numbers,
+  -readability-identifier-length,
+  -readability-named-parameter,
+  -readability-implicit-bool-conversion,
+  -readability-uppercase-literal-suffix,
+  -bugprone-easily-swappable-parameters,
+  -cert-err58-cpp
+
+WarningsAsErrors: ''
+
+HeaderFilterRegex: 'src/.*'
+
+FormatStyle: file
