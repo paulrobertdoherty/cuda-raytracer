@@ -91,7 +91,7 @@ void Window::on_mouse_button(int button, int action, int mods) {
 
 int Window::init_glad() {
 	// Initialize GLAD before calling any OpenGL function
-	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
+	if (!gladLoadGL(glfwGetProcAddress))
 	{
 		std::cout << "Failed to initialize GLAD" << "\n";
 		return -1;

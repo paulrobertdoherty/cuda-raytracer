@@ -37,7 +37,7 @@ struct VertexKeyHash {
 
 // Resolves a user-supplied OBJ path. If `path` is a directory, look for a
 // single `.obj` file inside it (the common case is a model dir like
-// `backpack/` containing `backpack.obj` + textures + .mtl). Returns an empty
+// `my_model/` containing `my_model.obj` + textures + .mtl). Returns an empty
 // string and writes a diagnostic to stderr on ambiguous/missing cases.
 static std::string resolve_obj_path(const std::string& path) {
 	std::error_code ec;

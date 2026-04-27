@@ -1,7 +1,7 @@
 #pragma once
 
 #ifndef HEADLESS_BUILD
-#include <glad/glad.h>
+#include <glad/gl.h>
 #endif
 #include <glm/glm.hpp>
 

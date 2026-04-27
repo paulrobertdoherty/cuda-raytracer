@@ -3,6 +3,8 @@ cmake_minimum_required (VERSION 3.24)
 # Emit compile_commands.json for clang-tidy and other tooling.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+include(FetchContent)
+
 # Enable Hot Reload for MSVC compilers if supported.
 if (POLICY CMP0141)
   cmake_policy(SET CMP0141 NEW)
@@ -42,7 +44,6 @@ if(HEADLESS)
 	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/ShaderManager\\.cpp$")
 	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/Gui\\.cpp$")
 	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/GLTexture\\.cpp$")
-	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/glad\\.c$")
 else()
 	# Exclude headless-only source files from GUI builds
 	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/HeadlessTexture\\.cpp$")
@@ -74,8 +75,13 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
 #######################################
 
 # GLM
-find_package(GLM REQUIRED)
-message(STATUS "GLM included at ${GLM_INCLUDE_DIR}")
+FetchContent_Declare(
+	glm
+	GIT_REPOSITORY https://github.com/g-truc/glm.git
+	GIT_TAG 0.9.9.8
+)
+FetchContent_MakeAvailable(glm)
+message(STATUS "GLM fetched at ${glm_SOURCE_DIR}")
 
 # CUDA
 find_package(CUDAToolkit REQUIRED)
@@ -99,8 +105,15 @@ else()
 	find_package(GLFW3 REQUIRED)
 	message(STATUS "Found GLFW3 in ${GLFW3_INCLUDE_DIR}")
 
-	# GLAD
-	add_library(GLAD "thirdparty/glad.c")
+	# GLAD (generated via glad2)
+	FetchContent_Declare(
+		glad
+		GIT_REPOSITORY https://github.com/Dav1dde/glad.git
+		GIT_TAG v2.0.8
+		SOURCE_SUBDIR cmake
+	)
+	FetchContent_MakeAvailable(glad)
+	glad_add_library(glad_gl_core_46 REPRODUCIBLE API gl:core=4.6)
 
 	# Dear ImGui + ImGuiFileDialog
 	add_library(IMGUI STATIC
@@ -117,20 +130,17 @@ else()
 		"${CMAKE_SOURCE_DIR}/thirdparty/imgui/backends"
 		"${CMAKE_SOURCE_DIR}/thirdparty/ImGuiFileDialog"
 		"${CMAKE_SOURCE_DIR}/include"
-		"${CMAKE_SOURCE_DIR}/include/glad"
 	)
 	target_link_libraries(IMGUI ${GLFW3_LIBRARY} ${OPENGL_LIBRARY})
 
 	# Put all libraries into a variable
-	set(LIBS ${GLFW3_LIBRARY} ${OPENGL_LIBRARY} GLAD IMGUI ${CMAKE_DL_LIBS} CUDA::cudart CUDA::curand)
+	set(LIBS ${GLFW3_LIBRARY} ${OPENGL_LIBRARY} glad_gl_core_46 IMGUI ${CMAKE_DL_LIBS} CUDA::cudart CUDA::curand)
 endif()
 
 # Define the include DIRs
 include_directories(
 	"${CMAKE_SOURCE_DIR}/src"
 	"${CMAKE_SOURCE_DIR}/include"
-	"${CMAKE_SOURCE_DIR}/include/glad"
-	"${CMAKE_SOURCE_DIR}/include/glm"
 	"${CMAKE_SOURCE_DIR}/thirdparty"
 	"${CMAKE_SOURCE_DIR}/thirdparty/imgui"
 	"${CMAKE_SOURCE_DIR}/thirdparty/imgui/backends"
@@ -144,6 +154,8 @@ endif()
 
 # Define the link libraries
 target_link_libraries(${PROJECT_NAME} ${LIBS})
+
+target_link_libraries(${PROJECT_NAME} glm::glm)
 
 # Create virtual folders to make it look nicer in VS
 if(MSVC_IDE)

@@ -63,7 +63,7 @@ Scene::Scene() {
 	ground.checker_color2 = glm::vec3(0.9f, 0.9f, 0.9f);
 	_objects.push_back(ground);
 
-	// Large metal sphere below the backpack (backpack loads at y≈0.5, scale=0.5)
+	// Large metal sphere placed near the center of the scene
 	_objects.push_back(make_sphere(glm::vec3(0.0f, -0.2f, -1.0f), 0.3f,
 		glm::vec3(0.8f, 0.8f, 0.8f),
 		SceneMaterial::Metal, glm::vec3(0.8f, 0.8f, 0.8f), 0.1f));
