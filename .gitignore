@@ -22,6 +22,7 @@ cuda-raytracer
 # Render outputs
 *.png
 *.rgba
+!obj-render.png
 
 # ImGui window/dock state written next to the binary on shutdown
 imgui.ini
