@@ -28,6 +28,12 @@ void Input::process_camera_movement(GLFWwindow* window, KernelInfo& kernelInfo, 
 	glm::vec3 position = kernelInfo.camera_info.origin;
 	glm::vec3 rotation = kernelInfo.camera_info.rotation;
 
+	// Frame-time normalised against an implicit 50 Hz reference (20 ms/frame).
+	// Acceleration, drag, position step, and roll all multiply by this — at
+	// high FPS (rasterisation preview) the same velocity gets integrated over
+	// many more frames per second, so without this scaling the camera flies.
+	const float dt = t_diff / 20.0f;
+
 	// ** rotation **
 	double xpos, ypos;
 	glfwGetCursorPos(window, &xpos, &ypos);
@@ -57,11 +63,11 @@ void Input::process_camera_movement(GLFWwindow* window, KernelInfo& kernelInfo, 
 
 	// roll
 	if (isPressed(GLFW_KEY_E)) {
-		rotation.z += 1.0f;
+		rotation.z += dt;
 		has_moved = true;
 	}
 	if (isPressed(GLFW_KEY_Q)) {
-		rotation.z -= 1.0f;
+		rotation.z -= dt;
 		has_moved = true;
 	}
 
@@ -87,7 +93,7 @@ void Input::process_camera_movement(GLFWwindow* window, KernelInfo& kernelInfo, 
 	last_ypos = ypos;
 	// **
 
-	float SPEED_ = 0.125f * (t_diff / 20.0f);
+	const float SPEED_ = 0.125f * dt;
 
 	if (isPressed(GLFW_KEY_W)) {
 		speed.z += SPEED_;
@@ -114,19 +120,19 @@ void Input::process_camera_movement(GLFWwindow* window, KernelInfo& kernelInfo, 
 		has_moved = true;
 	}
 
-	position += glm::cross(up, forward) * speed.x * 0.1f;
-	position.y += speed.y * 0.1f;
-	position += forward * -speed.z * 0.1f;
+	position += glm::cross(up, forward) * speed.x * 0.1f * dt;
+	position.y += speed.y * 0.1f * dt;
+	position += forward * -speed.z * 0.1f * dt;
 
 	for (int i = 0; i < 3; i++) {
 		if (abs(speed[i]) < 0.05) {
 			speed[i] = 0.0;
 		}
 		if (speed[i] > 0.0) {
-			speed[i] -= 0.075 * (t_diff / 20.0f);
+			speed[i] -= 0.075f * dt;
 		}
 		else if (speed[i] < 0.0) {
-			speed[i] += 0.075 * (t_diff / 20.0f);
+			speed[i] += 0.075f * dt;
 		}
 	}
 
