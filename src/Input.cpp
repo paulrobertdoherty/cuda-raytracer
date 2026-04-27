@@ -1,5 +1,6 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+#include <cmath>
 #include <iostream>
 
 #include <glm/glm.hpp>
@@ -124,16 +125,20 @@ void Input::process_camera_movement(GLFWwindow* window, KernelInfo& kernelInfo, 
 	position.y += speed.y * 0.1f * dt;
 	position += forward * -speed.z * 0.1f * dt;
 
+	// Proportional drag — speed decays by a fraction of dt each frame, so
+	// the input/drag balance gives an FPS-independent terminal velocity
+	// (~0.625 here) instead of unbounded acceleration. The previous
+	// constant-drag-with-deadband shape was FPS-independent in the
+	// continuous limit, but in the discrete simulation it broke two ways:
+	// at high FPS the |speed|<0.05 deadband zeroed velocity every frame
+	// (per-frame input was below the threshold) so motion stalled; at low
+	// FPS (ray-traced preview) the deadband never triggered and speed
+	// grew linearly without a terminal cap, so the camera flew.
+	const float DRAG = 0.2f;
+	const float decay = std::fmax(0.0f, 1.0f - DRAG * dt);
 	for (int i = 0; i < 3; i++) {
-		if (abs(speed[i]) < 0.05) {
-			speed[i] = 0.0;
-		}
-		if (speed[i] > 0.0) {
-			speed[i] -= 0.075f * dt;
-		}
-		else if (speed[i] < 0.0) {
-			speed[i] += 0.075f * dt;
-		}
+		speed[i] *= decay;
+		if (std::fabs(speed[i]) < 0.001f) speed[i] = 0.0f;
 	}
 
 	kernelInfo.camera_info.origin = position;
