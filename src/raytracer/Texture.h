@@ -6,7 +6,7 @@
 
 class Texture {
 public:
-	__device__ virtual glm::vec3 value(double u, double v, const glm::vec3& p) const = 0;
+	__device__ virtual glm::vec3 value(float u, float v, const glm::vec3& p) const = 0;
 };
 
 class SolidColor : public Texture {
@@ -16,7 +16,7 @@ public:
 	__device__ SolidColor(float red, float green, float blue) : SolidColor(glm::vec3(red, green, blue)) {}
 
 
-	__device__ virtual glm::vec3 value(double u, double v, const glm::vec3& p) const override {
+	__device__ virtual glm::vec3 value(float u, float v, const glm::vec3& p) const override {
 		return color_value;
 	}
 
@@ -30,9 +30,9 @@ public:
 	__device__ CheckerTexture(Texture* even_tex, Texture* odd_tex) : even(even_tex), odd(odd_tex) {}
 	__device__ CheckerTexture(glm::vec3 even_color, glm::vec3 odd_color) : even(new SolidColor(even_color)), odd(new SolidColor(odd_color)) {}
 
-	__device__ virtual glm::vec3 value(double u, double v, const glm::vec3& p) const override {
-		double sines = sin(10 * p.x) * sin(10 * p.y) * sin(10 * p.z);
-		if (sines < 0) {
+	__device__ virtual glm::vec3 value(float u, float v, const glm::vec3& p) const override {
+		float sines = sinf(10.0f * p.x) * sinf(10.0f * p.y) * sinf(10.0f * p.z);
+		if (sines < 0.0f) {
 			return odd->value(u, v, p);
 		}
 		else {
@@ -62,9 +62,9 @@ public:
 	__device__ ImageTexture(const unsigned char* pixels, int w, int h, int ch)
 		: d_pixels(pixels), width(w), height(h), channels(ch) {}
 
-	__device__ virtual glm::vec3 value(double u, double v, const glm::vec3& p) const override {
-		float uf = fminf(fmaxf((float)u, 0.0f), 1.0f);
-		float vf = fminf(fmaxf((float)v, 0.0f), 1.0f);
+	__device__ virtual glm::vec3 value(float u, float v, const glm::vec3& p) const override {
+		float uf = __saturatef(u);
+		float vf = __saturatef(v);
 		int i = (int)(uf * (width  - 1));
 		int j = (int)(vf * (height - 1));
 		int idx = (j * width + i) * channels;

@@ -176,20 +176,26 @@ public:
 						float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
 
 						if (isinf(f) || isnan(f)) {
-							// Degenerate UVs, use arbitrary ONB
-							glm::vec3 a = (fabsf(rec.normal.x) > 0.9f) ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
-							rec.bitangent = glm::normalize(glm::cross(rec.normal, a));
-							rec.tangent = glm::cross(rec.bitangent, rec.normal);
+							// Degenerate UVs: branchless ONB (Frisvad-Duff revised).
+							const glm::vec3& n = rec.normal;
+							float sign = copysignf(1.0f, n.z);
+							float a    = -1.0f / (sign + n.z);
+							float bxy  = n.x * n.y * a;
+							rec.tangent   = glm::vec3(1.0f + sign * n.x * n.x * a, sign * bxy,           -sign * n.x);
+							rec.bitangent = glm::vec3(bxy,                          sign + n.y * n.y * a, -n.y);
 						} else {
 							glm::vec3 tangent = f * (deltaUV2.y * edge1 - deltaUV1.y * edge2);
 							rec.tangent = glm::normalize(tangent - rec.normal * glm::dot(rec.normal, tangent));
 							rec.bitangent = glm::normalize(glm::cross(rec.normal, rec.tangent));
 						}
 					} else {
-						// Build arbitrary ONB
-						glm::vec3 a = (fabsf(rec.normal.x) > 0.9f) ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
-						rec.bitangent = glm::normalize(glm::cross(rec.normal, a));
-						rec.tangent = glm::cross(rec.bitangent, rec.normal);
+						// No UVs: branchless ONB (Frisvad-Duff revised).
+						const glm::vec3& n = rec.normal;
+						float sign = copysignf(1.0f, n.z);
+						float a    = -1.0f / (sign + n.z);
+						float bxy  = n.x * n.y * a;
+						rec.tangent   = glm::vec3(1.0f + sign * n.x * n.x * a, sign * bxy,           -sign * n.x);
+						rec.bitangent = glm::vec3(bxy,                          sign + n.y * n.y * a, -n.y);
 					}
 
 					rec.mat_ptr = mat_ptr;

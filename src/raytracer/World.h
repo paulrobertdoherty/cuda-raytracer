@@ -118,13 +118,13 @@ __device__ World::~World() {
 }
 
 __device__ AABB surrounding_box(AABB box0, AABB box1) {
-    glm::vec3 lo(fmin(box0.min().x, box1.min().x),
-        fmin(box0.min().y, box1.min().y),
-        fmin(box0.min().z, box1.min().z));
+    glm::vec3 lo(fminf(box0.min().x, box1.min().x),
+        fminf(box0.min().y, box1.min().y),
+        fminf(box0.min().z, box1.min().z));
 
-    glm::vec3 hi(fmax(box0.max().x, box1.max().x),
-        fmax(box0.max().y, box1.max().y),
-        fmax(box0.max().z, box1.max().z));
+    glm::vec3 hi(fmaxf(box0.max().x, box1.max().x),
+        fmaxf(box0.max().y, box1.max().y),
+        fmaxf(box0.max().z, box1.max().z));
 
     return AABB(lo, hi);
 }

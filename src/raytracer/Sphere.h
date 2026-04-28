@@ -27,7 +27,8 @@ public:
 
 		float discriminant = b * b - a * c;
 		if (discriminant > 0) {
-			float temp = (-b - sqrt(discriminant)) / a;
+			float sqrt_disc = sqrtf(discriminant);
+			float temp = (-b - sqrt_disc) / a;
 			if (temp > t_min && temp < t_max) {
 				rec.t = temp;
 				rec.p = r.at(rec.t);
@@ -38,7 +39,7 @@ public:
 				return true;
 			}
 
-			temp = (-b + sqrt(discriminant)) / a;
+			temp = (-b + sqrt_disc) / a;
 			if (temp > t_min && temp < t_max) {
 				rec.t = temp;
 				rec.p = r.at(rec.t);
@@ -62,7 +63,9 @@ public:
 		float z = 1.0f - 2.0f * curand_uniform(rng);
 		float r_xy = sqrtf(fmaxf(0.0f, 1.0f - z * z));
 		float phi = 2.0f * M_PI * curand_uniform(rng);
-		glm::vec3 dir(r_xy * cosf(phi), r_xy * sinf(phi), z);
+		float sp, cp;
+		__sincosf(phi, &sp, &cp);
+		glm::vec3 dir(r_xy * cp, r_xy * sp, z);
 		point = center + radius * dir;
 		normal_out = dir;
 		return true;

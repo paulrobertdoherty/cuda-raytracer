@@ -28,12 +28,16 @@ public:
 	__device__ Disc(glm::vec3 center, glm::vec3 normal, float radius, Material* mat)
 		: center(center), normal(glm::normalize(normal)), radius(radius), mat_ptr(mat) {
 		D = glm::dot(this->normal, this->center);
-		// Build ONB for the disc plane
-		glm::vec3 a = (fabsf(this->normal.x) > 0.9f)
-		              ? glm::vec3(0.0f, 1.0f, 0.0f)
-		              : glm::vec3(1.0f, 0.0f, 0.0f);
-		bitangent = glm::normalize(glm::cross(this->normal, a));
-		tangent   = glm::cross(bitangent, this->normal);
+		// Branchless ONB (Pixar / Frisvad-Duff) keeps construction divergence-free.
+		float sign = copysignf(1.0f, this->normal.z);
+		float a    = -1.0f / (sign + this->normal.z);
+		float bxy  = this->normal.x * this->normal.y * a;
+		tangent   = glm::vec3(1.0f + sign * this->normal.x * this->normal.x * a,
+		                      sign * bxy,
+		                      -sign * this->normal.x);
+		bitangent = glm::vec3(bxy,
+		                      sign + this->normal.y * this->normal.y * a,
+		                      -this->normal.y);
 	}
 
 	__device__ ~Disc() {
@@ -77,7 +81,9 @@ public:
 		// Uniform disc sampling: r = R*sqrt(xi), theta = 2pi*xi2
 		float r   = radius * sqrtf(curand_uniform(rng));
 		float phi = 2.0f * DISC_PI * curand_uniform(rng);
-		point      = center + r * (cosf(phi) * tangent + sinf(phi) * bitangent);
+		float sp, cp;
+		__sincosf(phi, &sp, &cp);
+		point      = center + r * (cp * tangent + sp * bitangent);
 		normal_out = normal;
 		return true;
 	}

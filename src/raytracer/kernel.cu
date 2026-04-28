@@ -271,11 +271,12 @@ KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int sam
 	int tx = 8;
 	int ty = 8;
 
-	dim3 blocks(nx / tx + 1, ny / ty + 1);
+	dim3 blocks((nx + tx - 1) / tx, (ny + ty - 1) / ty);
 	dim3 threads(tx, ty);
 	render_init<<<blocks, threads>>> (nx, ny, d_rand_state);
 	check_cuda_errors(cudaGetLastError());
-	check_cuda_errors(cudaDeviceSynchronize());
+	// No sync needed: stream ordering guarantees subsequent kernels on the
+	// default stream see the initialized rand state.
 }
 
 KernelInfo::KernelInfo(int nx, int ny, int samples, int max_depth, float fov) {
@@ -313,19 +314,23 @@ KernelInfo::KernelInfo(int nx, int ny, int samples, int max_depth, float fov) {
 
 	int tx = 8;
 	int ty = 8;
-	dim3 blocks(nx / tx + 1, ny / ty + 1);
+	dim3 blocks((nx + tx - 1) / tx, (ny + ty - 1) / ty);
 	dim3 threads(tx, ty);
 	render_init<<<blocks, threads>>> (nx, ny, d_rand_state);
 	check_cuda_errors(cudaGetLastError());
-	check_cuda_errors(cudaDeviceSynchronize());
+	// No sync needed: stream ordering guarantees subsequent kernels on the
+	// default stream see the initialized rand state.
 }
 
 void KernelInfo::render_to_buffer(std::vector<uint8_t>& output_rgba) {
 	// Point frame_buffer at headless device buffer
 	frame_buffer->device_ptr = d_headless_buffer;
 
-	int tx = 16;
-	int ty = 16;
+	// 32x8 keeps each warp on a single row of pixels: framebuffer writes hit
+	// one cache line per warp (vs two for 16x16) and the per-lane Philox
+	// state load is row-aligned.
+	constexpr int tx = 32;
+	constexpr int ty = 8;
 	dim3 blocks((nx + tx - 1) / tx, (ny + ty - 1) / ty);
 	dim3 threads(tx, ty);
 
@@ -373,11 +378,12 @@ void KernelInfo::resize(int nx, int ny) {
 	d_rand_state = thrust::device_new<RandState>(nx * ny);
 
 
-	dim3 blocks(nx / tx + 1, ny / ty + 1);
+	dim3 blocks((nx + tx - 1) / tx, (ny + ty - 1) / ty);
 	dim3 threads(tx, ty);
 	render_init << <blocks, threads >> > (nx, ny, d_rand_state);
 	check_cuda_errors(cudaGetLastError());
-	check_cuda_errors(cudaDeviceSynchronize());
+	// No sync needed: stream ordering guarantees subsequent kernels on the
+	// default stream see the initialized rand state.
 }
 
 __global__ void set_device_camera(thrust::device_ptr<Camera*> d_camera, glm::vec3 position, glm::vec3 forward, glm::vec3 up, float aspect_ratio) {
@@ -399,8 +405,10 @@ void KernelInfo::render(bool camera_moving, int pixelate) {
 	check_cuda_errors(cudaGraphicsMapResources(1, &resources));
 	check_cuda_errors(cudaGraphicsResourceGetMappedPointer((void**)&(frame_buffer->device_ptr), &(frame_buffer->buffer_size), resources));
 
-	int tx = 16;
-	int ty = 16;
+	// 32x8: warp covers one row of pixels — coalesces framebuffer writes and
+	// row-aligns the per-lane Philox state loads.
+	constexpr int tx = 32;
+	constexpr int ty = 8;
 
 	if (pixelate > 1) {
 		int eff_nx = (nx + pixelate - 1) / pixelate;
@@ -410,7 +418,7 @@ void KernelInfo::render(bool camera_moving, int pixelate) {
 
 		raytrace_pixelated<<<blocks, threads>>> (*frame_buffer, d_world, d_camera, d_rand_state, pixelate);
 	} else {
-		dim3 blocks(nx / tx + 1, ny / ty + 1);
+		dim3 blocks((nx + tx - 1) / tx, (ny + ty - 1) / ty);
 		dim3 threads(tx, ty);
 
 		int spp = camera_moving ? 1 : samples;
@@ -436,8 +444,9 @@ void KernelInfo::unmap_pbo() {
 }
 
 void KernelInfo::render_tile(int tile_offset_x, int tile_offset_y, int tile_w, int tile_h, int spp) {
-	int tx = 16;
-	int ty = 16;
+	// 32x8 matches the row-aligned layout used by the main render path.
+	constexpr int tx = 32;
+	constexpr int ty = 8;
 
 	dim3 blocks((tile_w + tx - 1) / tx, (tile_h + ty - 1) / ty);
 	dim3 threads(tx, ty);

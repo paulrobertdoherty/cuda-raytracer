@@ -9,30 +9,43 @@ struct HitRecord;
 #include "Hittable.h"
 #include "Texture.h"
 
-#define RANDVEC3 glm::vec3(curand_uniform(local_rand_state),curand_uniform(local_rand_state),curand_uniform(local_rand_state))
+#ifndef TWO_PI_F
+#define TWO_PI_F 6.28318530717958647693f
+#endif
 
+// Closed-form uniform-volume sample inside the unit ball. Replaces the
+// rejection-sampling loop, which produced heavy warp divergence (the loop
+// runs until the LAST lane in the warp accepts; ~5-6 iterations expected
+// vs. ~1.91 per-lane mean). The cbrtf radial scale preserves the volume-
+// uniform distribution of the original rejection sampler.
 __device__ glm::vec3 random_in_unit_sphere(RandState* local_rand_state) {
-	glm::vec3 p;
-	do {
-		p = 2.0f * RANDVEC3 - glm::vec3(1, 1, 1);
-	} while (glm::dot(p, p) >= 1.0f);
-	return p;
+	float z   = 1.0f - 2.0f * curand_uniform(local_rand_state);
+	float r   = sqrtf(fmaxf(0.0f, 1.0f - z * z));
+	float phi = TWO_PI_F * curand_uniform(local_rand_state);
+	float sp, cp;
+	__sincosf(phi, &sp, &cp);
+	float scale = cbrtf(curand_uniform(local_rand_state));
+	return scale * glm::vec3(r * cp, r * sp, z);
 }
 
 __device__ glm::vec3 random_in_hemisphere(RandState* local_rand_state, const glm::vec3 normal) {
 	glm::vec3 in_unit_sphere = random_in_unit_sphere(local_rand_state);
 
-	if (glm::dot(in_unit_sphere, normal) > 0.0) {
+	if (glm::dot(in_unit_sphere, normal) > 0.0f) {
 		return in_unit_sphere;
 	}
 	return -in_unit_sphere;
 }
 
-// Build an orthonormal basis (tangent, bitangent, normal) from a surface normal
-__device__ void build_onb(const glm::vec3& n, glm::vec3& t, glm::vec3& b) {
-	glm::vec3 a = (fabsf(n.x) > 0.9f) ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
-	b = glm::normalize(glm::cross(n, a));
-	t = glm::cross(b, n);
+// Branchless orthonormal basis (Pixar's revised Frisvad): produces a
+// well-conditioned (t, b, n) frame without the divergent fabsf(n.x) > 0.9
+// branch. See "Building an Orthonormal Basis, Revisited" (Duff et al. 2017).
+__device__ inline void build_onb(const glm::vec3& n, glm::vec3& t, glm::vec3& b) {
+	float sign = copysignf(1.0f, n.z);
+	float a    = -1.0f / (sign + n.z);
+	float bxy  = n.x * n.y * a;
+	t = glm::vec3(1.0f + sign * n.x * n.x * a, sign * bxy,           -sign * n.x);
+	b = glm::vec3(bxy,                          sign + n.y * n.y * a, -n.y);
 }
 
 // Cosine-weighted hemisphere sampling: PDF proportional to cos(theta)/pi
@@ -40,9 +53,12 @@ __device__ glm::vec3 cosine_weighted_hemisphere(RandState* local_rand_state, con
 	float r1 = curand_uniform(local_rand_state);
 	float r2 = curand_uniform(local_rand_state);
 
-	float phi = 2.0f * 3.14159265358979323846f * r1;
-	float x = cosf(phi) * sqrtf(r2);
-	float y = sinf(phi) * sqrtf(r2);
+	float phi = TWO_PI_F * r1;
+	float sp, cp;
+	__sincosf(phi, &sp, &cp);
+	float sr2 = sqrtf(r2);
+	float x = cp * sr2;
+	float y = sp * sr2;
 	float z = sqrtf(1.0f - r2);
 
 	// Transform from local frame (normal = Z) to world space
@@ -56,14 +72,14 @@ __device__ glm::vec3 reflect(const glm::vec3& v, const glm::vec3& n) {
 }
 
 __device__ bool near_zero(const glm::vec3& v) {
-	float theta = 1e-8;
-	return (fabs(v[0]) < theta) && (fabs(v[1]) < theta) && (fabs(v[2]) < theta);
+	float theta = 1e-8f;
+	return (fabsf(v[0]) < theta) && (fabsf(v[1]) < theta) && (fabsf(v[2]) < theta);
 }
 
 __device__ glm::vec3 refract(const glm::vec3& uv, const glm::vec3& n, float etai_over_etat) {
 	float cos_theta = fminf(glm::dot(-uv, n), 1.0f);
 	glm::vec3 r_out_perp = etai_over_etat * (uv + cos_theta * n);
-	glm::vec3 r_out_parallel = -sqrtf(fabsf(1.0 - glm::dot(r_out_perp, r_out_perp))) * n;
+	glm::vec3 r_out_parallel = -sqrtf(fabsf(1.0f - glm::dot(r_out_perp, r_out_perp))) * n;
 	return r_out_perp + r_out_parallel;
 }
 
@@ -151,10 +167,10 @@ public:
 		float refraction_ratio = rec.front_face ? (1.0f / ir) : ir;
 		glm::vec3 unit_direction = glm::normalize(r_in.direction);
 
-		float cos_theta = fminf(glm::dot(-unit_direction, rec.normal), 1.0);
+		float cos_theta = fminf(glm::dot(-unit_direction, rec.normal), 1.0f);
 		float sin_theta = sqrtf(1.0f - cos_theta * cos_theta);
 
-		bool cannot_refract = refraction_ratio * sin_theta > 1.0;
+		bool cannot_refract = refraction_ratio * sin_theta > 1.0f;
 
 		glm::vec3 direction;
 
