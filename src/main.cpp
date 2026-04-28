@@ -13,7 +13,12 @@
 #include <iostream>
 #include <string>
 #ifdef HEADLESS_BUILD
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
 #include <fstream>
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
 #endif
 
 #if defined(__linux__) && !defined(HEADLESS_BUILD)
@@ -41,7 +46,8 @@ void print_usage(const char* program_name) {
 		<< "  --obj <path>       Load a wavefront .obj mesh into the scene\n"
 		<< "  --texture <path>   Diffuse texture (PNG/JPG/TGA) for the loaded mesh\n"
 #ifdef HEADLESS_BUILD
-		<< "  --output <path>    Output raw RGBA file path (required in headless mode)\n"
+		<< "  --output <path>    Output file (required). Writes PNG if path ends in .png, else raw RGBA.\n"
+		<< "  --seed <int>       Philox RNG seed (default: 1984). Same seed + same scene = same image.\n"
 		<< "  --camera-pos <x,y,z>   Camera position (default: 0,1,4)\n"
 		<< "  --camera-target <x,y,z> Camera look-at target (default: 0,0,0)\n"
 #endif
@@ -104,6 +110,7 @@ static int run(int argc, char* argv[])
 	std::string texture_path;
 #ifdef HEADLESS_BUILD
 	std::string output_path;
+	int seed = 1984;
 	glm::vec3 camera_pos(0.0f, 1.0f, 4.0f);
 	glm::vec3 camera_target(0.0f, 0.0f, 0.0f);
 #endif
@@ -136,6 +143,8 @@ static int run(int argc, char* argv[])
 #ifdef HEADLESS_BUILD
 		} else if (arg == "--output" && i + 1 < argc) {
 			output_path = argv[++i];
+		} else if (arg == "--seed" && i + 1 < argc) {
+			if (!parse_int_arg("--seed", argv[++i], seed)) return 1;
 		} else if (arg == "--camera-pos" && i + 1 < argc) {
 			camera_pos = parse_vec3(argv[++i]);
 		} else if (arg == "--camera-target" && i + 1 < argc) {
@@ -156,7 +165,8 @@ static int run(int argc, char* argv[])
 	}
 
 	std::cout << "Headless render: " << width << "x" << height
-	          << ", " << params.samples << " spp, depth " << params.max_depth << "\n";
+	          << ", " << params.samples << " spp, depth " << params.max_depth
+	          << ", seed " << seed << "\n";
 
 	// Create the scene
 	Scene scene;
@@ -170,7 +180,7 @@ static int run(int argc, char* argv[])
 	}
 
 	// Create headless renderer
-	KernelInfo renderer(width, height, params.samples, params.max_depth, params.fov);
+	KernelInfo renderer(width, height, params.samples, params.max_depth, params.fov, seed);
 
 	// Set camera
 	glm::vec3 forward = glm::normalize(camera_target - camera_pos);
@@ -184,19 +194,40 @@ static int run(int argc, char* argv[])
 	std::vector<uint8_t> pixels;
 	renderer.render_to_buffer(pixels);
 
-	std::ofstream out(output_path, std::ios::binary);
-	if (!out) {
-		std::cerr << "Failed to open: " << output_path << "\n";
-		return 1;
+	// Write PNG if path ends in ".png" (case-insensitive), else raw RGBA bytes.
+	std::string lowered = output_path;
+	std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+	               [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+	bool want_png = lowered.size() >= 4 &&
+	                lowered.compare(lowered.size() - 4, 4, ".png") == 0;
+
+	if (want_png) {
+		// stride = width * 4 bytes (RGBA8). render_to_buffer already produced
+		// top-row-first pixels (Y-flipped from GL convention), so no further
+		// flipping needed.
+		int rc = stbi_write_png(output_path.c_str(), width, height, 4,
+		                        pixels.data(), width * 4);
+		if (rc == 0) {
+			std::cerr << "Failed to write PNG: " << output_path << "\n";
+			return 1;
+		}
+		std::cout << "Saved " << width << "x" << height
+		          << " PNG to: " << output_path << "\n";
+	} else {
+		std::ofstream out(output_path, std::ios::binary);
+		if (!out) {
+			std::cerr << "Failed to open: " << output_path << "\n";
+			return 1;
+		}
+		out.write(reinterpret_cast<const char*>(pixels.data()),
+		          static_cast<std::streamsize>(pixels.size()));
+		if (!out) {
+			std::cerr << "Failed to write: " << output_path << "\n";
+			return 1;
+		}
+		std::cout << "Saved " << width << "x" << height
+		          << " raw RGBA to: " << output_path << "\n";
 	}
-	out.write(reinterpret_cast<const char*>(pixels.data()),
-	          static_cast<std::streamsize>(pixels.size()));
-	if (!out) {
-		std::cerr << "Failed to write: " << output_path << "\n";
-		return 1;
-	}
-	std::cout << "Saved " << width << "x" << height
-	          << " RGBA to: " << output_path << "\n";
 
 	return 0;
 #else

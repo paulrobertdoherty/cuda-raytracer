@@ -201,7 +201,8 @@ __global__ void construct_objects_parallel(DeviceObjectDesc* descs, int count,
 __global__ void assemble_world(thrust::device_ptr<World*> d_world,
                                Hittable** objects,
                                DeviceObjectDesc* descs,
-                               int count) {
+                               int count,
+                               int seed) {
 	if (threadIdx.x != 0 || blockIdx.x != 0) return;
 
 	if (*d_world) {
@@ -220,26 +221,27 @@ __global__ void assemble_world(thrust::device_ptr<World*> d_world,
 	}
 
 	curandState rand_state;
-	curand_init(1984, 0, 0, &rand_state);
+	curand_init(seed, 0, 0, &rand_state);
 	world->build_bvh(&rand_state);
 }
 
-__global__ void render_init(int width, int height, thrust::device_ptr<RandState> rand_state) {
+__global__ void render_init(int width, int height, thrust::device_ptr<RandState> rand_state, int seed) {
 	int i = threadIdx.x + blockIdx.x * blockDim.x;
 	int j = threadIdx.y + blockIdx.y * blockDim.y;
 	if ((i >= width) || (j >= height)) return;
 	int pixel_index = j * width + i;
 	//Each thread gets same seed, a different sequence number, no offset
-	curand_init(1984, pixel_index, 0, &rand_state.get()[pixel_index]);
+	curand_init(seed, pixel_index, 0, &rand_state.get()[pixel_index]);
 }
 
 
-KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int samples, int max_depth, float fov) {
+KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int samples, int max_depth, float fov, int seed) {
 	this->resources = resources;
 	this->nx = nx;
 	this->ny = ny;
 	this->samples = samples;
 	this->max_depth = max_depth;
+	this->seed = seed;
 	this->headless = false;
 	this->d_headless_buffer = nullptr;
 
@@ -273,18 +275,19 @@ KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int sam
 
 	dim3 blocks((nx + tx - 1) / tx, (ny + ty - 1) / ty);
 	dim3 threads(tx, ty);
-	render_init<<<blocks, threads>>> (nx, ny, d_rand_state);
+	render_init<<<blocks, threads>>> (nx, ny, d_rand_state, seed);
 	check_cuda_errors(cudaGetLastError());
 	// No sync needed: stream ordering guarantees subsequent kernels on the
 	// default stream see the initialized rand state.
 }
 
-KernelInfo::KernelInfo(int nx, int ny, int samples, int max_depth, float fov) {
+KernelInfo::KernelInfo(int nx, int ny, int samples, int max_depth, float fov, int seed) {
 	this->resources = {};
 	this->nx = nx;
 	this->ny = ny;
 	this->samples = samples;
 	this->max_depth = max_depth;
+	this->seed = seed;
 	this->headless = true;
 	this->d_headless_buffer = nullptr;
 
@@ -316,7 +319,7 @@ KernelInfo::KernelInfo(int nx, int ny, int samples, int max_depth, float fov) {
 	int ty = 8;
 	dim3 blocks((nx + tx - 1) / tx, (ny + ty - 1) / ty);
 	dim3 threads(tx, ty);
-	render_init<<<blocks, threads>>> (nx, ny, d_rand_state);
+	render_init<<<blocks, threads>>> (nx, ny, d_rand_state, seed);
 	check_cuda_errors(cudaGetLastError());
 	// No sync needed: stream ordering guarantees subsequent kernels on the
 	// default stream see the initialized rand state.
@@ -380,7 +383,7 @@ void KernelInfo::resize(int nx, int ny) {
 
 	dim3 blocks((nx + tx - 1) / tx, (ny + ty - 1) / ty);
 	dim3 threads(tx, ty);
-	render_init << <blocks, threads >> > (nx, ny, d_rand_state);
+	render_init << <blocks, threads >> > (nx, ny, d_rand_state, seed);
 	check_cuda_errors(cudaGetLastError());
 	// No sync needed: stream ordering guarantees subsequent kernels on the
 	// default stream see the initialized rand state.
@@ -876,7 +879,7 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 
 	// Even with count==0 we still need to swap in a fresh empty World so the
 	// renderer isn't pointing at stale state.
-	assemble_world<<<1, 1>>>(d_world, d_object_ptr_buffer, d_desc_buffer, count);
+	assemble_world<<<1, 1>>>(d_world, d_object_ptr_buffer, d_desc_buffer, count, seed);
 	check_cuda_errors(cudaGetLastError());
 	check_cuda_errors(cudaDeviceSynchronize());
 }

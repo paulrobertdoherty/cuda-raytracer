@@ -128,6 +128,7 @@ struct KernelInfo {
     int nx, ny;
     int samples;
     int max_depth;
+    int seed;
 
     // Headless rendering support
     bool headless = false;
@@ -172,9 +173,9 @@ struct KernelInfo {
 
     KernelInfo() {}
     ~KernelInfo();
-    KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int samples, int max_depth, float fov);
+    KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int samples, int max_depth, float fov, int seed = 1984);
     // Headless constructor — no OpenGL, allocates its own device buffer
-    KernelInfo(int nx, int ny, int samples, int max_depth, float fov);
+    KernelInfo(int nx, int ny, int samples, int max_depth, float fov, int seed = 1984);
     void set_camera(glm::vec3 position, glm::vec3 forward, glm::vec3 up);
     void render(bool camera_moving, int pixelate = 1);
     void resize(int nx, int ny);
