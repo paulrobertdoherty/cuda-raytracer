@@ -34,3 +34,7 @@ imgui.ini
 .dolt/
 *.db
 .beads-credential-key
+.beads.bak.*/
+.beads.embedded-pre-migration/
+beads-migrate.jsonl
+migrate-beads-to-server.sh
