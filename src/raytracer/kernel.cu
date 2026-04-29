@@ -252,6 +252,7 @@ KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int sam
 	//checkCudaErrors(cudaMalloc((void**)&d_camera, sizeof(Camera)));
 	d_camera = thrust::device_new<Camera*>();
 	d_rand_state = thrust::device_new<RandState>(nx * ny);
+	d_rand_state_capacity = nx * ny;
 
 	d_world = thrust::device_new<World*>();
 
@@ -297,6 +298,7 @@ KernelInfo::KernelInfo(int nx, int ny, int samples, int max_depth, float fov, in
 
 	d_camera = thrust::device_new<Camera*>();
 	d_rand_state = thrust::device_new<RandState>(nx * ny);
+	d_rand_state_capacity = nx * ny;
 	d_world = thrust::device_new<World*>();
 
 	size_t heap_size;
@@ -374,13 +376,21 @@ void KernelInfo::resize(int nx, int ny) {
 	delete frame_buffer;
 	this->frame_buffer = new FrameBuffer(nx, ny, max_depth);
 
-	int tx = 8;
-	int ty = 8;
+	int new_count = nx * ny;
+	if (new_count <= d_rand_state_capacity) {
+		// Shrink-or-equal: keep the existing rand-state buffer. Pixels reuse
+		// whatever Philox state lives at j*new_width+i; for stochastic path
+		// tracing this only changes the realized noise pattern, not bias.
+		// Skips ~tens of millions of curand_init calls per drag-resize.
+		return;
+	}
 
 	thrust::device_free(d_rand_state);
-	d_rand_state = thrust::device_new<RandState>(nx * ny);
+	d_rand_state = thrust::device_new<RandState>(new_count);
+	d_rand_state_capacity = new_count;
 
-
+	int tx = 8;
+	int ty = 8;
 	dim3 blocks((nx + tx - 1) / tx, (ny + ty - 1) / ty);
 	dim3 threads(tx, ty);
 	render_init << <blocks, threads >> > (nx, ny, d_rand_state, seed);

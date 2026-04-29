@@ -118,6 +118,11 @@ struct KernelInfo {
 
     thrust::device_ptr<Camera*> d_camera;
     thrust::device_ptr<RandState> d_rand_state;
+    // High-water mark for d_rand_state. Resize only reallocates+reinits when
+    // growing past this; shrinks keep the buffer (pixels reuse whatever
+    // Philox state happens to live at index j*width+i, which is fine for
+    // stochastic path tracing).
+    int d_rand_state_capacity = 0;
 
     thrust::device_ptr<World*> d_world;
 
