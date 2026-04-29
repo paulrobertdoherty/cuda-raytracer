@@ -85,14 +85,22 @@ __device__ glm::vec3 refract(const glm::vec3& uv, const glm::vec3& n, float etai
 
 class Material {
 public:
+	// Set once at construction. Replaces a virtual is_specular() that was hot
+	// in FrameBuffer::color (NEE branch, queried every bounce); a vtable lookup
+	// per ray serializes warps when materials differ across lanes. Field access
+	// is a single load and lets PTXAS hoist/CSE the result.
+	const bool is_specular_flag;
+protected:
+	__device__ Material(bool spec = false) : is_specular_flag(spec) {}
+public:
 	__device__ virtual bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, RandState* local_rand_state) const = 0;
 	__device__ virtual glm::vec3 emitted(float u, float v, const glm::vec3& p) const {
 		return glm::vec3(0.0f);
 	}
-	__device__ virtual bool is_specular() const { return false; }
+	__device__ bool is_specular() const { return is_specular_flag; }
 };
 
-class Lambertian : public Material {
+class Lambertian final : public Material {
 	Texture* albedo;
 	Texture* normal_map;
 	Texture* specular_map;
@@ -141,12 +149,11 @@ public:
 	}
 };
 
-class Metal : public Material {
+class Metal final : public Material {
 	glm::vec3 albedo;
 	float fuzz;
 public:
-	__device__ Metal(const glm::vec3& a, float f) : albedo(a) { if (f < 1) fuzz = f; else fuzz = 1; }
-	__device__ bool is_specular() const override { return true; }
+	__device__ Metal(const glm::vec3& a, float f) : Material(true), albedo(a) { if (f < 1) fuzz = f; else fuzz = 1; }
 	__device__ virtual bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, RandState* local_rand_state) const {
 		glm::vec3 reflected = reflect(glm::normalize(r_in.direction), rec.normal);
 		scattered = Ray(rec.p, reflected + fuzz * random_in_unit_sphere(local_rand_state));
@@ -155,12 +162,11 @@ public:
 	}
 };
 
-class Dielectric : public Material {
+class Dielectric final : public Material {
 public:
 	float ir; // index of refraction
 
-	__device__ Dielectric(float index_of_refraction): ir(index_of_refraction) {}
-	__device__ bool is_specular() const override { return true; }
+	__device__ Dielectric(float index_of_refraction): Material(true), ir(index_of_refraction) {}
 
 	__device__ virtual bool scatter(const Ray& r_in, const HitRecord& rec, glm::vec3& attenuation, Ray& scattered, RandState* local_rand_state) const {
 		attenuation = glm::vec3(1.0f, 1.0f, 1.0f);
@@ -192,7 +198,7 @@ private:
 	}
 };
 
-class Emissive : public Material {
+class Emissive final : public Material {
 	Texture* emit;
 	float intensity;
 public:
@@ -214,7 +220,7 @@ public:
 // direction, then re-emit from that offset point with a cosine-weighted
 // hemisphere direction. Attenuation combines the base albedo with Beer's law
 // using per-channel extinction coefficients for color-dependent scattering.
-class SubsurfaceScatter : public Material {
+class SubsurfaceScatter final : public Material {
 	glm::vec3 albedo;
 	float scattering_distance;
 	float ior;
