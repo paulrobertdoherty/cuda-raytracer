@@ -63,14 +63,18 @@ public:
 		: d_pixels(pixels), width(w), height(h), channels(ch) {}
 
 	__device__ virtual glm::vec3 value(float u, float v, const glm::vec3& p) const override {
+		// __restrict__ alias lets PTXAS route the byte loads through the
+		// read-only cache; the buffer is never aliased by other state on
+		// this code path.
+		const unsigned char* __restrict__ pix = d_pixels;
 		float uf = __saturatef(u);
 		float vf = __saturatef(v);
 		int i = (int)(uf * (width  - 1));
 		int j = (int)(vf * (height - 1));
 		int idx = (j * width + i) * channels;
-		float r = d_pixels[idx + 0] / 255.0f;
-		float g = d_pixels[idx + 1] / 255.0f;
-		float b = (channels >= 3) ? d_pixels[idx + 2] / 255.0f : g;
+		float r = pix[idx + 0] / 255.0f;
+		float g = pix[idx + 1] / 255.0f;
+		float b = (channels >= 3) ? pix[idx + 2] / 255.0f : g;
 		return glm::vec3(r, g, b);
 	}
 	// Does NOT free d_pixels — KernelInfo owns the device buffer.

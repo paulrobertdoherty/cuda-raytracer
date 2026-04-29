@@ -72,6 +72,17 @@ public:
 		// Early-out against the mesh bounding box.
 		if (!world_aabb.hit(r, t_min, t_max)) return false;
 
+		// Hot-loop pointer aliases. __restrict__ tells PTXAS these don't
+		// overlap each other or any other address; loads can be reordered,
+		// CSE'd across iterations, and routed through the read-only cache
+		// (effectively __ldg).
+		const glm::vec3* __restrict__ verts    = d_vertices;
+		const int*       __restrict__ idx      = d_indices;
+		const MeshBVHNode* __restrict__ bvh    = d_bvh_nodes;
+		const int*       __restrict__ tri_ids  = d_reordered_tri_ids;
+		const glm::vec2* __restrict__ uvs      = d_uvs;
+		const glm::vec3* __restrict__ normals  = d_normals;
+
 		// Inverse-transform ray from world space to local space.
 		// World vertex = translate + scale * local_vertex, so:
 		//   local_origin    = (ray.origin - translate) / scale
@@ -106,7 +117,7 @@ public:
 
 		while (stack_ptr > 0) {
 			int node_idx = stack[--stack_ptr];
-			const MeshBVHNode& node = d_bvh_nodes[node_idx];
+			const MeshBVHNode& node = bvh[node_idx];
 
 			// Test ray against this node's AABB.
 			if (!slab_test(node.aabb_min, node.aabb_max,
@@ -116,14 +127,14 @@ public:
 			if (node.tri_count > 0) {
 				// Leaf: test each triangle in the range.
 				for (int i = 0; i < node.tri_count; i++) {
-					int tri_id = d_reordered_tri_ids[node.tri_start + i];
-					int i0 = d_indices[3 * tri_id + 0];
-					int i1 = d_indices[3 * tri_id + 1];
-					int i2 = d_indices[3 * tri_id + 2];
+					int tri_id = tri_ids[node.tri_start + i];
+					int i0 = idx[3 * tri_id + 0];
+					int i1 = idx[3 * tri_id + 1];
+					int i2 = idx[3 * tri_id + 2];
 
-					glm::vec3 v0 = d_vertices[i0];
-					glm::vec3 v1 = d_vertices[i1];
-					glm::vec3 v2 = d_vertices[i2];
+					glm::vec3 v0 = verts[i0];
+					glm::vec3 v1 = verts[i1];
+					glm::vec3 v2 = verts[i2];
 
 					// Moller-Trumbore in local space.
 					glm::vec3 edge1 = v1 - v0;
@@ -147,8 +158,8 @@ public:
 					// If UV buffer present, interpolate texture coordinates
 					// from the triangle vertices using barycentric coords.
 					glm::vec2 uv0(0), uv1(0), uv2(0);
-					if (d_uvs) {
-						uv0 = d_uvs[i0]; uv1 = d_uvs[i1]; uv2 = d_uvs[i2];
+					if (uvs) {
+						uv0 = uvs[i0]; uv1 = uvs[i1]; uv2 = uvs[i2];
 						glm::vec2 interp = (1.0f - u - v) * uv0 + u * uv1 + v * uv2;
 						rec.u = interp.x;
 						rec.v = interp.y;
@@ -158,10 +169,10 @@ public:
 					}
 
 					glm::vec3 outward_normal;
-					if (d_normals) {
-						glm::vec3 n0 = d_normals[i0];
-						glm::vec3 n1 = d_normals[i1];
-						glm::vec3 n2 = d_normals[i2];
+					if (normals) {
+						glm::vec3 n0 = normals[i0];
+						glm::vec3 n1 = normals[i1];
+						glm::vec3 n2 = normals[i2];
 						outward_normal = glm::normalize((1.0f - u - v) * n0 + u * n1 + v * n2);
 					} else {
 						outward_normal = glm::normalize(glm::cross(edge1, edge2));
@@ -169,7 +180,7 @@ public:
 					rec.set_face_normal(r, outward_normal);
 
 					// Compute tangent and bitangent for normal mapping
-					if (d_uvs) {
+					if (uvs) {
 						glm::vec2 deltaUV1 = uv1 - uv0;
 						glm::vec2 deltaUV2 = uv2 - uv0;
 
