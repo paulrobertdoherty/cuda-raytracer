@@ -31,9 +31,10 @@ print_help() {
 Usage: ./run-claude.sh [flags] [-- <args passed to claude>]
 
 Runs Claude Code inside a Docker container with --dangerously-skip-permissions,
-isolated from your host filesystem. Repo is mounted at /workspace. The
-container gets --gpus all so CUDA builds work. Headless build only; run the
-GUI binary on the host.
+isolated from your host filesystem. Repo is mounted at the SAME absolute path
+as on the host (so ~/.claude/projects/ keys match and conversation history /
+per-project memory work transparently). The container gets --gpus all so CUDA
+builds work. Headless build only; run the GUI binary on the host.
 
 No flags:       drop into an interactive bash shell in the container
                 (claude is on \$PATH; run it manually).
@@ -51,13 +52,19 @@ Flags:
 
 Image:      ${IMAGE}
 Container:  ${CONTAINER_DEFAULT}
-Workspace:  ${REPO_DIR} -> /workspace
+Workspace:  ${REPO_DIR} -> ${REPO_DIR} (path-matched)
 
 Persisted on host (bind-mounted):
-  ~/.claude                -> /home/dev/.claude     (rw, auth/sessions)
+  ~/.claude                -> /home/dev/.claude     (rw, auth/sessions/history)
   ~/.claude.json           -> /home/dev/.claude.json (rw, if present)
   ~/.gitconfig             -> /home/dev/.gitconfig   (ro, if present)
+  ~/.coderabbit            -> /home/dev/.coderabbit  (rw, if present; auth/reviews)
 SSH keys are intentionally NOT mounted.
+
+Forwarded into container (env):
+  GH_TOKEN          (from \$GH_TOKEN, else 'gh auth token' on host, if available)
+  ANTHROPIC_API_KEY (if set on host)
+GH_TOKEN powers HTTPS auth for 'git push' AND 'bd dolt push' (over git+https).
 
 The container runs as user 'dev' (UID/GID matched to your host user) because
 claude --dangerously-skip-permissions refuses to run as root.
@@ -117,6 +124,7 @@ ENV DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC
 RUN apt-get update && apt-get install -y --no-install-recommends \\
       ca-certificates curl git gpg gpg-agent pkg-config build-essential \\
       ninja-build gdb valgrind less ripgrep jq python3 python3-pip sudo \\
+      unzip \\
  && rm -rf /var/lib/apt/lists/*
 
 # Kitware APT for cmake >= 3.24 (project requires 3.24; jammy ships 3.22).
@@ -139,6 +147,28 @@ RUN curl -fsSL "https://github.com/gastownhall/beads/releases/download/v\${BEADS
       | tar -xz -C /tmp \\
  && install -m 0755 /tmp/bd /usr/local/bin/bd \\
  && rm -f /tmp/bd
+
+# dolt CLI (required for 'bd dolt start/push/pull' — beads runs in embedded
+# mode without it, which disables the Dolt server lifecycle commands).
+RUN curl -fsSL https://github.com/dolthub/dolt/releases/latest/download/install.sh \\
+      | bash
+
+# gh CLI — provides the credential helper used by 'git push' and 'bd dolt push'
+# over git+https. We don't mount any host token file; the host's gh token is
+# forwarded as GH_TOKEN env at run time, which both 'git' (via gh's helper) and
+# 'gh' itself pick up automatically.
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \\
+      | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg \\
+ && echo "deb [arch=\$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \\
+      > /etc/apt/sources.list.d/github-cli.list \\
+ && apt-get update && apt-get install -y --no-install-recommends gh \\
+ && rm -rf /var/lib/apt/lists/*
+
+# CodeRabbit CLI for code review (used by /coderabbit:review etc.).
+# Auth state (~/.coderabbit) is bind-mounted from the host at run time.
+RUN curl -fsSL https://cli.coderabbit.ai/install.sh | sh \\
+ && install -m 0755 /root/.local/bin/coderabbit /usr/local/bin/coderabbit \\
+ && rm -rf /root/.local
 
 # Non-root user matching host UID/GID. claude --dangerously-skip-permissions
 # refuses to run as root. Passwordless sudo so apt-get etc. still works.
@@ -182,10 +212,13 @@ container_running() {
 
 build_run_args() {
   # Populates global RUN_ARGS and CMD_ARGS.
+  # Path-matched workspace: ~/.claude/projects/ keys conversations by absolute
+  # host path. Mounting at the same path inside the container keeps history,
+  # per-project memory, and plans coherent across host/container runs.
   RUN_ARGS=( --gpus all -it
              --name "$CONTAINER"
-             -v "$REPO_DIR:/workspace"
-             -w /workspace
+             -v "$REPO_DIR:$REPO_DIR"
+             -w "$REPO_DIR"
              -v "$HOME/.claude:/home/dev/.claude"
              -e "TERM=${TERM:-xterm-256color}" )
 
@@ -195,6 +228,19 @@ build_run_args() {
     && RUN_ARGS+=( -v "$HOME/.claude.json:/home/dev/.claude.json" )
   [[ -f "$HOME/.gitconfig" ]] \
     && RUN_ARGS+=( -v "$HOME/.gitconfig:/home/dev/.gitconfig:ro" )
+  [[ -d "$HOME/.coderabbit" ]] \
+    && RUN_ARGS+=( -v "$HOME/.coderabbit:/home/dev/.coderabbit" )
+
+  # GitHub token: explicit GH_TOKEN wins; otherwise pull from host's gh keyring.
+  # Used by git push (via gh's credential helper) and bd dolt push (git+https).
+  local gh_token="${GH_TOKEN:-}"
+  if [[ -z "$gh_token" ]] && command -v gh >/dev/null 2>&1; then
+    gh_token="$(gh auth token 2>/dev/null || true)"
+  fi
+  [[ -n "$gh_token" ]] && RUN_ARGS+=( -e "GH_TOKEN=$gh_token" )
+
+  [[ -n "${ANTHROPIC_API_KEY:-}" ]] \
+    && RUN_ARGS+=( -e "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" )
 
   local safe_flag="--dangerously-skip-permissions"
   (( SAFE )) && safe_flag=""
