@@ -9,7 +9,7 @@
 class Triangle : public Hittable {
 public:
 	glm::vec3 v0, v1, v2;
-	Material* mat_ptr;
+	Material* mat_ptr = nullptr;
 
 	__device__ Triangle() {}
 

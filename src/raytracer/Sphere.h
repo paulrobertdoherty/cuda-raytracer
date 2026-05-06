@@ -11,7 +11,7 @@ class Sphere : public Hittable {
 public:
 	glm::vec3 center;
 	float radius;
-	Material* mat_ptr;
+	Material* mat_ptr = nullptr;
 
 	__device__ Sphere() {}
 	__device__ ~Sphere() {

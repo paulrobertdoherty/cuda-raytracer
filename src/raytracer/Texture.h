@@ -40,8 +40,8 @@ public:
 		}
 	}
 
-	Texture* even;
-	Texture* odd;
+	Texture* even = nullptr;
+	Texture* odd = nullptr;
 
 	__device__ ~CheckerTexture() {
 		delete even;

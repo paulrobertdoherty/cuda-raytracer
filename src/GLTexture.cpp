@@ -1,6 +1,5 @@
 #include "GLTexture.h"
 
-#define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
 #include <iostream>
@@ -29,6 +28,7 @@ bool GLTexture::load(const std::string& path) {
 	GLenum fmt = GL_RGB;
 	GLenum internal_fmt = GL_RGB8;
 	if (_channels == 1) { fmt = GL_RED; internal_fmt = GL_R8; }
+	else if (_channels == 2) { fmt = GL_RG; internal_fmt = GL_RG8; }
 	else if (_channels == 3) { fmt = GL_RGB; internal_fmt = GL_RGB8; }
 	else if (_channels == 4) { fmt = GL_RGBA; internal_fmt = GL_RGBA8; }
 

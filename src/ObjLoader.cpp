@@ -8,6 +8,7 @@
 #include <iostream>
 #include <unordered_map>
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <system_error>
 
@@ -47,7 +48,11 @@ static std::string resolve_obj_path(const std::string& path) {
 
 	std::vector<std::filesystem::path> candidates;
 	for (const auto& entry : std::filesystem::directory_iterator(path, ec)) {
-		if (entry.is_regular_file(ec) && entry.path().extension() == ".obj") {
+		if (!entry.is_regular_file(ec)) continue;
+		std::string ext = entry.path().extension().string();
+		std::transform(ext.begin(), ext.end(), ext.begin(),
+		               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		if (ext == ".obj") {
 			candidates.push_back(entry.path());
 		}
 	}

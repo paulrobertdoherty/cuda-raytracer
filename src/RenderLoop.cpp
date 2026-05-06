@@ -1,5 +1,7 @@
 #include "RenderLoop.h"
 
+#include <iostream>
+
 RenderLoop::RenderLoop() {}
 
 int RenderLoop::init_gl_resources(GLFWwindow* window,
@@ -10,6 +12,13 @@ int RenderLoop::init_gl_resources(GLFWwindow* window,
 		"./shaders/rendertype_screen.vert", "./shaders/rendertype_screen.frag");
 	_accum_shader = shaders.load("accumulate",
 		"./shaders/rendertype_accumulate.vert", "./shaders/rendertype_accumulate.frag");
+
+	if (!_screen_shader || !_accum_shader) {
+		std::cerr << "[RenderLoop] shader load failed: screen="
+		          << static_cast<const void*>(_screen_shader)
+		          << " accumulate=" << static_cast<const void*>(_accum_shader) << "\n";
+		return 1;
+	}
 
 	{
 		int fb_w = 0, fb_h = 0;
@@ -54,6 +63,11 @@ int RenderLoop::init_gl_resources(GLFWwindow* window,
 
 void RenderLoop::destroy() {
 	_current_frame->cuda_destroy();
+
+	if (_raster_depth_rb != 0) {
+		glDeleteRenderbuffers(1, &_raster_depth_rb);
+		_raster_depth_rb = 0;
+	}
 }
 
 void RenderLoop::resize(int width, int height) {

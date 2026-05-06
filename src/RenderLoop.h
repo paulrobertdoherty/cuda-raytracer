@@ -65,7 +65,7 @@ private:
 	GLuint _raster_depth_rb = 0;
 	std::unique_ptr<Rasterizer> _rasterizer;
 
-	static void copyFrameBufferTexture(int width, int height,
-	                                   int fboIn, int textureIn,
-	                                   int fboOut, int textureOut);
+	void copyFrameBufferTexture(int width, int height,
+	                            int fboIn, int textureIn,
+	                            int fboOut, int textureOut);
 };
