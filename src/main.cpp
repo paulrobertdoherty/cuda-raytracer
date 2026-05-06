@@ -55,10 +55,17 @@ void print_usage(const char* program_name) {
 }
 
 #ifdef HEADLESS_BUILD
-static glm::vec3 parse_vec3(const char* str) {
+// Returns true on success. Writes diagnostic to stderr on failure.
+static bool parse_vec3(const char* flag, const char* str, glm::vec3& out) {
 	float x = 0, y = 0, z = 0;
-	sscanf(str, "%f,%f,%f", &x, &y, &z);
-	return glm::vec3(x, y, z);
+	if (sscanf(str, "%f,%f,%f", &x, &y, &z) != 3) {
+		std::cerr << "Error: " << flag
+		          << " expected x,y,z (three comma-separated floats), got '"
+		          << str << "'\n";
+		return false;
+	}
+	out = glm::vec3(x, y, z);
+	return true;
 }
 #endif
 
@@ -146,9 +153,9 @@ static int run(int argc, char* argv[])
 		} else if (arg == "--seed" && i + 1 < argc) {
 			if (!parse_int_arg("--seed", argv[++i], seed)) return 1;
 		} else if (arg == "--camera-pos" && i + 1 < argc) {
-			camera_pos = parse_vec3(argv[++i]);
+			if (!parse_vec3("--camera-pos", argv[++i], camera_pos)) return 1;
 		} else if (arg == "--camera-target" && i + 1 < argc) {
-			camera_target = parse_vec3(argv[++i]);
+			if (!parse_vec3("--camera-target", argv[++i], camera_target)) return 1;
 #endif
 		} else {
 			std::cerr << "Unknown option: " << arg << "\n";
@@ -182,8 +189,16 @@ static int run(int argc, char* argv[])
 	// Create headless renderer
 	KernelInfo renderer(width, height, params.samples, params.max_depth, params.fov, seed);
 
-	// Set camera
-	glm::vec3 forward = glm::normalize(camera_target - camera_pos);
+	// Set camera. Reject coincident pos/target — normalize(0) is NaN and would
+	// poison every camera ray.
+	glm::vec3 view = camera_target - camera_pos;
+	float view_len = glm::length(view);
+	if (view_len < 1e-6f) {
+		std::cerr << "Error: --camera-pos and --camera-target are coincident; "
+		          << "give the camera a direction to look in.\n";
+		return 1;
+	}
+	glm::vec3 forward = view / view_len;
 	renderer.set_camera(camera_pos, forward, glm::vec3(0.0f, 1.0f, 0.0f));
 
 	// Build the CUDA world from the scene

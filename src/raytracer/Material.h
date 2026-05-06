@@ -8,6 +8,7 @@ struct HitRecord;
 #include "Ray.h"
 #include "Hittable.h"
 #include "Texture.h"
+#include "Constants.h"
 
 #ifndef TWO_PI_F
 #define TWO_PI_F 6.28318530717958647693f
@@ -253,6 +254,9 @@ public:
 		glm::vec3 exit_point = rec.p + scatter_offset;
 
 		glm::vec3 exit_dir = cosine_weighted_hemisphere(local_rand_state, rec.normal);
+		// Bias the exit origin off the entry surface along the new ray direction so
+		// the scatter ray doesn't immediately re-intersect the same triangle.
+		exit_point += T_SELF_INTERSECT * exit_dir;
 		scattered = Ray(exit_point, exit_dir);
 
 		glm::vec3 beer = glm::vec3(

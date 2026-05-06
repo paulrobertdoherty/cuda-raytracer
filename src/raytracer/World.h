@@ -18,6 +18,10 @@ public:
     Hittable** objects;
     Hittable* bvh_root;
 
+    // Non-owning view: each element is also stored in objects[] (and therefore
+    // owned by bvh_root once the BVH is built). add_light() must always be paired
+    // with add() on the same pointer — the destructor only frees the backing
+    // array, never the elements.
     Hittable** lights;
     int num_lights;
     int lights_capacity;

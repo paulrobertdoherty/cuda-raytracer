@@ -22,9 +22,18 @@ public:
 	__device__ Rect(glm::vec3 Q, glm::vec3 u, glm::vec3 v, Material* mat)
 		: Q(Q), u(u), v(v), mat_ptr(mat) {
 		glm::vec3 n = glm::cross(u, v);
-		normal = glm::normalize(n);
-		D = glm::dot(normal, Q);
-		w = n / glm::dot(n, n);
+		float n_dot = glm::dot(n, n);
+		// Degenerate rect (parallel/zero edges): keep finite values so hit() can
+		// reject ray-vs-plane via the |denom| < eps test instead of propagating NaN.
+		if (n_dot < RAY_PARALLEL_EPS * RAY_PARALLEL_EPS) {
+			normal = glm::vec3(0.0f, 1.0f, 0.0f);
+			D = glm::dot(normal, Q);
+			w = glm::vec3(0.0f);
+		} else {
+			normal = n / sqrtf(n_dot);
+			D = glm::dot(normal, Q);
+			w = n / n_dot;
+		}
 	}
 
 	__device__ ~Rect() {

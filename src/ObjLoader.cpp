@@ -136,8 +136,14 @@ std::unique_ptr<Mesh> load(const std::string& path) {
 					attrib.vertices[3 * idx.vertex_index + 1],
 					attrib.vertices[3 * idx.vertex_index + 2]);
 			}
-			glm::vec3 flat_normal = glm::normalize(
-				glm::cross(face_pos[1] - face_pos[0], face_pos[2] - face_pos[0]));
+			glm::vec3 face_cross = glm::cross(face_pos[1] - face_pos[0],
+			                                  face_pos[2] - face_pos[0]);
+			float face_cross_len = glm::length(face_cross);
+			// Degenerate (colinear) face: glm::normalize would return NaN.
+			// Substitute Y-up so per-vertex normals fall back to a finite axis.
+			glm::vec3 flat_normal = (face_cross_len > 0.0f)
+				? face_cross / face_cross_len
+				: glm::vec3(0.0f, 1.0f, 0.0f);
 
 			for (int v = 0; v < 3; v++) {
 				auto idx = mesh_data.indices[index_offset + v];

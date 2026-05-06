@@ -52,16 +52,16 @@ int Window::init_glfw() {
 
 	_window = glfwCreateWindow(_window_width, _window_height, "A CUDA ray tracer", nullptr, nullptr);
 
-	glfwSetInputMode(_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-
-	glfwSetWindowUserPointer(_window, reinterpret_cast<void*>(this));
-	glfwSetMouseButtonCallback(_window, mouse_button_callback);
-
 	if (_window == nullptr) {
 		std::cout << "Failed to create GLFW window" << "\n";
 		glfwTerminate();
 		return -1;
 	}
+
+	glfwSetInputMode(_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+
+	glfwSetWindowUserPointer(_window, reinterpret_cast<void*>(this));
+	glfwSetMouseButtonCallback(_window, mouse_button_callback);
 
 	glfwMakeContextCurrent(_window);
 

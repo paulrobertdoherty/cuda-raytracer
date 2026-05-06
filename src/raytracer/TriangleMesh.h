@@ -7,6 +7,17 @@
 #include "MeshBVHNode.h"
 #include "Constants.h"
 
+// Frisvad-Duff revised ONB: builds an orthonormal basis (tangent, bitangent)
+// for a unit normal n with no branch on n.z's sign and no singularity at
+// n.z = -1 (the original Frisvad construction divides by 1+n.z).
+__device__ inline void build_onb_frisvad(const glm::vec3& n, glm::vec3& tangent, glm::vec3& bitangent) {
+	float sign = copysignf(1.0f, n.z);
+	float a    = -1.0f / (sign + n.z);
+	float bxy  = n.x * n.y * a;
+	tangent   = glm::vec3(1.0f + sign * n.x * n.x * a, sign * bxy,           -sign * n.x);
+	bitangent = glm::vec3(bxy,                          sign + n.y * n.y * a, -n.y);
+}
+
 // A full indexed triangle mesh packed into one Hittable. Unlike individual
 // Triangle objects, the mesh owns its vertex and index buffers and its own
 // Material, so a single `delete` (in the destructor) frees everything
@@ -187,26 +198,14 @@ public:
 						float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
 
 						if (isinf(f) || isnan(f)) {
-							// Degenerate UVs: branchless ONB (Frisvad-Duff revised).
-							const glm::vec3& n = rec.normal;
-							float sign = copysignf(1.0f, n.z);
-							float a    = -1.0f / (sign + n.z);
-							float bxy  = n.x * n.y * a;
-							rec.tangent   = glm::vec3(1.0f + sign * n.x * n.x * a, sign * bxy,           -sign * n.x);
-							rec.bitangent = glm::vec3(bxy,                          sign + n.y * n.y * a, -n.y);
+							build_onb_frisvad(rec.normal, rec.tangent, rec.bitangent);
 						} else {
 							glm::vec3 tangent = f * (deltaUV2.y * edge1 - deltaUV1.y * edge2);
 							rec.tangent = glm::normalize(tangent - rec.normal * glm::dot(rec.normal, tangent));
 							rec.bitangent = glm::normalize(glm::cross(rec.normal, rec.tangent));
 						}
 					} else {
-						// No UVs: branchless ONB (Frisvad-Duff revised).
-						const glm::vec3& n = rec.normal;
-						float sign = copysignf(1.0f, n.z);
-						float a    = -1.0f / (sign + n.z);
-						float bxy  = n.x * n.y * a;
-						rec.tangent   = glm::vec3(1.0f + sign * n.x * n.x * a, sign * bxy,           -sign * n.x);
-						rec.bitangent = glm::vec3(bxy,                          sign + n.y * n.y * a, -n.y);
+						build_onb_frisvad(rec.normal, rec.tangent, rec.bitangent);
 					}
 
 					rec.mat_ptr = mat_ptr;
