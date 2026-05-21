@@ -13,12 +13,12 @@ public:
 	float radius;
 	Material* mat_ptr = nullptr;
 
-	__device__ Sphere() {}
+	__device__ Sphere() : Hittable(HittableKind::Sphere) {}
 	__device__ ~Sphere() {
 		delete mat_ptr;
 	}
 
-	__device__ Sphere(glm::vec3 center, float radius, Material* mat_ptr) : center(center), radius(radius), mat_ptr(mat_ptr) {}
+	__device__ Sphere(glm::vec3 center, float radius, Material* mat_ptr) : Hittable(HittableKind::Sphere), center(center), radius(radius), mat_ptr(mat_ptr) {}
 	__device__ bool hit(const Ray& r, float t_min, float t_max, HitRecord& rec) const {
 		glm::vec3 oc = r.origin - this->center;
 		float a = glm::dot(r.direction, r.direction);

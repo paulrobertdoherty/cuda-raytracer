@@ -11,10 +11,10 @@ public:
 	glm::vec3 v0, v1, v2;
 	Material* mat_ptr = nullptr;
 
-	__device__ Triangle() {}
+	__device__ Triangle() : Hittable(HittableKind::Triangle) {}
 
 	__device__ Triangle(glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, Material* mat)
-		: v0(v0), v1(v1), v2(v2), mat_ptr(mat) {}
+		: Hittable(HittableKind::Triangle), v0(v0), v1(v1), v2(v2), mat_ptr(mat) {}
 
 	__device__ ~Triangle() {
 		delete mat_ptr;

@@ -23,10 +23,10 @@ public:
 	glm::vec3 tangent;   // in-plane axis 1
 	glm::vec3 bitangent; // in-plane axis 2
 
-	__device__ Disc() {}
+	__device__ Disc() : Hittable(HittableKind::Disc) {}
 
 	__device__ Disc(glm::vec3 center, glm::vec3 normal, float radius, Material* mat)
-		: center(center), normal(glm::normalize(normal)), radius(radius), mat_ptr(mat) {
+		: Hittable(HittableKind::Disc), center(center), normal(glm::normalize(normal)), radius(radius), mat_ptr(mat) {
 		D = glm::dot(this->normal, this->center);
 		// Branchless ONB (Pixar / Frisvad-Duff) keeps construction divergence-free.
 		float sign = copysignf(1.0f, this->normal.z);

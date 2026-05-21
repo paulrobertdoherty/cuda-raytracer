@@ -32,6 +32,7 @@ public:
 #ifdef __CUDACC__
 #include "Material.h"
 #include "World.h"
+#include "HittableDispatch.h"
 #include "Constants.h"
 
 #ifndef M_PI
@@ -74,7 +75,7 @@ __device__ glm::vec3 FrameBuffer::color(const Ray& r, World* world, RandState* l
 		}
 
 		HitRecord rec;
-		if (world->hit(cur_ray, T_SELF_INTERSECT, FLT_MAX, rec)) {
+		if (dispatch_hit(world, cur_ray, T_SELF_INTERSECT, FLT_MAX, rec)) {
 			// Only count emission if not already handled by NEE on previous bounce
 			if (count_emission) {
 				glm::vec3 emit = cur_attenuation * rec.mat_ptr->emitted(rec.u, rec.v, rec.p);
@@ -93,7 +94,7 @@ __device__ glm::vec3 FrameBuffer::color(const Ray& r, World* world, RandState* l
 					Hittable* light = world->lights[light_idx];
 
 					glm::vec3 light_point, light_normal;
-					if (light->sample_point(local_rand_state, light_point, light_normal)) {
+					if (dispatch_sample_point(light, local_rand_state, light_point, light_normal)) {
 						glm::vec3 to_light = light_point - rec.p;
 						float dist_sq = glm::dot(to_light, to_light);
 						float dist = sqrtf(dist_sq);
@@ -105,17 +106,17 @@ __device__ glm::vec3 FrameBuffer::color(const Ray& r, World* world, RandState* l
 						if (cos_theta_surface > 0.0f && cos_theta_light > 0.0f) {
 							Ray shadow_ray(rec.p, to_light_dir);
 							HitRecord shadow_rec;
-							bool occluded = world->hit(shadow_ray, T_SELF_INTERSECT,
+							bool occluded = dispatch_hit(world, shadow_ray, T_SELF_INTERSECT,
 								dist - T_SELF_INTERSECT, shadow_rec);
 
 							if (!occluded) {
 								HitRecord light_rec;
-								if (light->hit(Ray(rec.p, to_light_dir), T_SELF_INTERSECT,
+								if (dispatch_hit(light, Ray(rec.p, to_light_dir), T_SELF_INTERSECT,
 										dist + 0.01f, light_rec)) {
 									glm::vec3 Le = light_rec.mat_ptr->emitted(
 										light_rec.u, light_rec.v, light_rec.p);
 
-									float light_area = light->area();
+									float light_area = dispatch_area(light);
 									glm::vec3 nee = Le * (attenuation / (float)M_PI)
 										* cos_theta_surface
 										* (cos_theta_light / dist_sq)

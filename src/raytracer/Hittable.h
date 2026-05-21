@@ -3,6 +3,7 @@
 #include "Ray.h"
 #include <glm/glm.hpp>
 #include <curand_kernel.h>
+#include <cstdint>
 
 // Use Philox counter-based RNG for per-pixel state: smaller working set and
 // better throughput than the default XORWOW generator on modern GPUs.
@@ -28,8 +29,27 @@ struct HitRecord {
 	}
 };
 
+// Tag used by HittableDispatch.h to devirtualize hit()/sample_point()/area()
+// on the per-bounce hot path. Each subclass passes its kind to the base ctor
+// below; the dispatcher switches on this tag and static_casts to the right
+// subclass for an inline, qualified call (no vtable load).
+enum class HittableKind : uint8_t {
+	Sphere,
+	Triangle,
+	Rect,
+	Disc,
+	TriangleMesh,
+	BVHNode,
+	World,
+};
+
 class Hittable {
 public:
+	HittableKind kind;
+
+	__device__ Hittable() : kind(HittableKind::Sphere) {} // sentinel, must be overwritten
+	__device__ Hittable(HittableKind k) : kind(k) {}
+
 	__device__ virtual ~Hittable() {}
 	__device__ virtual bool hit(const Ray& r, float t_min, float t_max, HitRecord& rec) const = 0;
 	__device__ virtual bool bounding_box(float time0, float time1, AABB& output_box) const = 0;

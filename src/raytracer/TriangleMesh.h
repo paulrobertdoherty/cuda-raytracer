@@ -53,7 +53,8 @@ public:
 	                         glm::vec3 world_min, glm::vec3 world_max,
 	                         MeshBVHNode* bvh_nodes, int bvh_count,
 	                         int* reordered_tri_ids, int tri_count)
-		: d_vertices(verts), d_normals(normals), d_uvs(uvs), d_indices(indices),
+		: Hittable(HittableKind::TriangleMesh),
+		  d_vertices(verts), d_normals(normals), d_uvs(uvs), d_indices(indices),
 		  vertex_count(vcount), index_count(icount),
 		  translate(translate), scale(scale),
 		  world_aabb(world_min, world_max), mat_ptr(mat),

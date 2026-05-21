@@ -46,7 +46,8 @@ class BVHNode : public Hittable {
 public:
 	__device__ BVHNode();
 
-    __device__ BVHNode(Hittable** objects, int n, float time0, float time1, curandState* local_rand_state) {
+    __device__ BVHNode(Hittable** objects, int n, float time0, float time1, curandState* local_rand_state)
+        : Hittable(HittableKind::BVHNode) {
         if (n == 1) {
             left = right = objects[0];
         } else if (n == 2) {
@@ -131,31 +132,10 @@ public:
         box = surrounding_box(box_left, box_right);
     }
 
-	__device__ virtual bool hit(const Ray& r, float t_min, float t_max, HitRecord& rec) const {
-        if (box.hit(r, t_min, t_max)) {
-            HitRecord left_rec, right_rec;
-            bool hit_left = left->hit(r, t_min, t_max, left_rec);
-            bool hit_right = right->hit(r, t_min, t_max, right_rec);
-            if (hit_left && hit_right) {
-                if (left_rec.t < right_rec.t)
-                    rec = left_rec;
-                else
-                    rec = right_rec;
-                return true;
-            }
-            else if (hit_left) {
-                rec = left_rec;
-                return true;
-            }
-            else if (hit_right) {
-                rec = right_rec;
-                return true;
-            }
-            else
-                return false;
-        }
-        else return false;
-	}
+	// hit() body lives in HittableDispatch.h so it can call the tagged
+	// dispatcher (which in turn must know about all subclasses). Declared
+	// inline here, defined after the dispatcher is in scope.
+	__device__ virtual bool hit(const Ray& r, float t_min, float t_max, HitRecord& rec) const;
     __device__ virtual bool bounding_box(float t0, float t1, AABB& output_box) const {
         output_box = box;
         return true;

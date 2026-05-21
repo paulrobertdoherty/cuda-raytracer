@@ -28,7 +28,7 @@ public:
 
     __device__ World() : World(8) {}
 
-    __device__ World(int initial_capacity) {
+    __device__ World(int initial_capacity) : Hittable(HittableKind::World) {
         int cap = initial_capacity > 0 ? initial_capacity : 8;
         objects = new Hittable*[cap];
         number_of_objects = 0;
@@ -41,22 +41,9 @@ public:
 
     __device__ ~World();
 
-    __device__ virtual bool hit(const Ray& r, float t_min, float t_max, HitRecord& rec) const {
-        if (bvh_root) {
-            return bvh_root->hit(r, t_min, t_max, rec);
-        }
-        HitRecord temp_rec;
-        bool hit_anything = false;
-        float closest_so_far = t_max;
-        for (int i = 0; i < number_of_objects; i++) {
-            if (objects[i]->hit(r, t_min, closest_so_far, temp_rec)) {
-                hit_anything = true;
-                closest_so_far = temp_rec.t;
-                rec = temp_rec;
-            }
-        }
-        return hit_anything;
-    }
+    // hit() body lives in HittableDispatch.h so it can route child calls
+    // (bvh_root->hit, objects[i]->hit) through the tagged dispatcher.
+    __device__ virtual bool hit(const Ray& r, float t_min, float t_max, HitRecord& rec) const;
 
     __device__ virtual bool bounding_box(float time0, float time1, AABB& output_box) const;
 

@@ -17,10 +17,10 @@ public:
 	float D;
 	glm::vec3 w;
 
-	__device__ Rect() {}
+	__device__ Rect() : Hittable(HittableKind::Rect) {}
 
 	__device__ Rect(glm::vec3 Q, glm::vec3 u, glm::vec3 v, Material* mat)
-		: Q(Q), u(u), v(v), mat_ptr(mat) {
+		: Hittable(HittableKind::Rect), Q(Q), u(u), v(v), mat_ptr(mat) {
 		glm::vec3 n = glm::cross(u, v);
 		float n_dot = glm::dot(n, n);
 		// Degenerate rect (parallel/zero edges): keep finite values so hit() can
