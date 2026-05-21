@@ -97,12 +97,40 @@ check_prereqs() {
   command -v docker >/dev/null 2>&1 \
     || die "docker not found. Install: https://docs.docker.com/engine/install/"
 
-  if ! docker run --rm --gpus all "nvidia/cuda:${CUDA_PROBE_TAG}" \
-         nvidia-smi >/dev/null 2>&1; then
+  local probe_out probe_rc=0
+  probe_out="$(docker run --rm --gpus all "nvidia/cuda:${CUDA_PROBE_TAG}" \
+                 nvidia-smi 2>&1)" || probe_rc=$?
+  (( probe_rc == 0 )) && return 0
+
+  # Host kernel driver missing (e.g. kernel upgraded without a DKMS rebuild).
+  if grep -qiE 'driver not loaded|couldn.?t communicate with the nvidia driver|nvml' \
+       <<<"$probe_out"; then
+    die "host NVIDIA kernel driver isn't loaded (toolkit is fine).
+Usually a kernel upgrade without a matching DKMS rebuild. Check + fix:
+  sudo dkms status                              # see which kernel the module is built for
+  sudo apt install \"linux-headers-\$(uname -r)\"
+  sudo dkms autoinstall -k \"\$(uname -r)\"
+  sudo modprobe nvidia && nvidia-smi
+Tip: 'sudo apt install linux-headers-amd64' pulls matching headers on every
+future kernel upgrade so DKMS rebuilds automatically.
+
+probe output:
+${probe_out}"
+  fi
+
+  # Toolkit / runtime missing (--gpus unsupported, no nvidia-container-cli, etc.).
+  if grep -qiE 'could not select device driver|unknown.*--gpus|nvidia-container-cli|nvidia-container-runtime' \
+       <<<"$probe_out"; then
     die "GPU not accessible to Docker. Install nvidia-container-toolkit:
   sudo apt install nvidia-container-toolkit
-  sudo systemctl restart docker"
+  sudo systemctl restart docker
+
+probe output:
+${probe_out}"
   fi
+
+  die "GPU probe failed (exit ${probe_rc}):
+${probe_out}"
 }
 
 ensure_host_dirs() {
