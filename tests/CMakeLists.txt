@@ -6,10 +6,14 @@ if(MSVC)
 endif()
 add_test(NAME ray_math COMMAND ray_math_test)
 
+add_executable(render_state_test render_state.cpp)
+target_compile_features(render_state_test PRIVATE cxx_std_17)
+add_test(NAME render_state COMMAND render_state_test)
+
 if(HEADLESS)
 	add_executable(scene_updates_test scene_updates.cpp)
 	target_link_libraries(scene_updates_test PRIVATE headless_renderer)
-	add_test(NAME scene_updates COMMAND scene_updates_test)
+	add_test(NAME scene_updates COMMAND scene_updates_test "${CMAKE_CURRENT_SOURCE_DIR}/data")
 
 	find_package(Python3 REQUIRED COMPONENTS Interpreter)
 	add_test(NAME render_regression

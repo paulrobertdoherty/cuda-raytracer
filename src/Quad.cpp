@@ -116,6 +116,7 @@ void Quad::render_kernel(bool camera_moving, int pixelate) const {
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, this->PBO);
     glBindTexture(GL_TEXTURE_2D, this->texture);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 }
 
 void Quad::render_tile(int x, int y, int w, int h, int samples) const {

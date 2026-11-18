@@ -1,6 +1,8 @@
 #include "Mesh.h"
+#include "AssetRevision.h"
 
 void Mesh::upload() {
+	_revision = next_asset_revision();
 	if (vertices.empty() || indices.empty()) {
 		_index_count = 0;
 		return;

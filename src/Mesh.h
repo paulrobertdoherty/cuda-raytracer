@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 
 #include <memory>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -44,7 +45,10 @@ public:
 	std::vector<MeshVertex> vertices;
 	std::vector<unsigned int> indices;
 
+	std::uint64_t revision() const { return _revision; }
+
 private:
+	std::uint64_t _revision = 0;
 	void upload_display();
 	unsigned int _vao = 0;
 	unsigned int _vbo = 0;

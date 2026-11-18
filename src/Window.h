@@ -7,7 +7,7 @@
 #include <string>
 
 #include "RenderParams.h"
-#include "RenderMode.h"
+#include "RenderState.h"
 #include "SceneController.h"
 #include "RenderLoop.h"
 #include "InputHandler.h"
@@ -60,10 +60,7 @@ private:
 	std::unique_ptr<Gui> _gui;
 
 	RenderParams _params;
-	RenderMode _render_mode = RenderMode::PREVIEW;
-	int _frame_count = 1;
-	bool _camera_moving = false;
-	bool _rasterization_enabled = false;
+	RenderState _render_state;
 
 	std::string _obj_path;
 	std::string _texture_path;

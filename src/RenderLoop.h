@@ -10,7 +10,7 @@
 #include "Quad.h"
 #include "Rasterizer.h"
 #include "RenderParams.h"
-#include "RenderMode.h"
+#include "RenderState.h"
 #include "raytracer/kernel.h"
 
 class RenderLoop {
@@ -29,12 +29,7 @@ public:
 	void resize(int width, int height);
 	void set_viewport(int x, int render_w, int render_h);
 
-	void render_frame(GLFWwindow* window,
-	                  RenderMode& render_mode,
-	                  const RenderParams& params,
-	                  int& frame_count,
-	                  bool camera_moving,
-	                  bool raster_enabled);
+	void render_frame(GLFWwindow* window, RenderState& state, const RenderParams& params);
 
 	Quad& current_frame() { return *_current_frame; }
 	const Quad& current_frame() const { return *_current_frame; }
@@ -64,7 +59,7 @@ private:
 	GLuint _raster_depth_rb = 0;
 	std::unique_ptr<Rasterizer> _rasterizer;
 
-	static void copyFrameBufferTexture(int width, int height,
-	                            int fboIn, int textureIn,
-	                            int fboOut, int textureOut);
+	void draw_preview(const PreviewState& preview, const RenderParams& params);
+	void draw_final(GLFWwindow* window, const RenderParams& params);
+	void present() const;
 };

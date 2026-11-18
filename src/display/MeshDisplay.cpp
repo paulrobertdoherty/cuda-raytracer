@@ -17,9 +17,11 @@ Mesh::~Mesh() {
 }
 
 void Mesh::upload_display() {
-	glGenVertexArrays(1, &_vao);
-	glGenBuffers(1, &_vbo);
-	glGenBuffers(1, &_ebo);
+	if (!_vao) {
+		glGenVertexArrays(1, &_vao);
+		glGenBuffers(1, &_vbo);
+		glGenBuffers(1, &_ebo);
+	}
 
 	glBindVertexArray(_vao);
 	glBindBuffer(GL_ARRAY_BUFFER, _vbo);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 // Minimal 2D GL texture loaded from an image file via stb_image. RAII; the
@@ -27,7 +28,10 @@ public:
 	// after a successful load(). Owned by this object; freed in destructor.
 	const unsigned char* raw_pixels() const { return _pixels; }
 
+	std::uint64_t revision() const { return _revision; }
+
 private:
+	std::uint64_t _revision = 0;
 	unsigned int         _id       = 0;
 	int            _width    = 0;
 	int            _height   = 0;

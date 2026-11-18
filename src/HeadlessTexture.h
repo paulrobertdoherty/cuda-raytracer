@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 // Minimal texture loader for headless mode — loads image pixels via stb_image
@@ -20,7 +21,10 @@ public:
 	int channels() const { return _channels; }
 	const unsigned char* raw_pixels() const { return _pixels; }
 
+	std::uint64_t revision() const { return _revision; }
+
 private:
+	std::uint64_t _revision = 0;
 	int            _width    = 0;
 	int            _height   = 0;
 	int            _channels = 0;

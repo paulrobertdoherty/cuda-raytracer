@@ -29,6 +29,7 @@
 #include "MeshBVHBuilder.h"
 
 #include <algorithm>
+#include <climits>
 #include <limits>
 #include <vector>
 #include <memory>
@@ -115,6 +116,78 @@ __global__ void create_world(thrust::device_ptr<World*> d_world, thrust::device_
 	}
 }
 
+// ---------------------------------------------------------------------------
+// POD descriptors used to rebuild the CUDA world from host state. These are
+// uploaded as a contiguous device buffer; the construction kernel
+// constructs each Hittable and Material in its own scene pool slot.
+// ---------------------------------------------------------------------------
+
+enum class DeviceObjectKind : std::uint8_t {
+    Sphere = 0,
+    Triangle = 1,
+    Rect = 2,
+    Mesh = 3,
+    Disc = 4
+};
+
+enum class DeviceMaterialKind : std::uint8_t {
+    Lambertian = 0,
+    Metal = 1,
+    Dielectric = 2,
+    Emissive = 3,
+    SubsurfaceScattering = 4
+};
+
+struct DeviceObjectDesc {
+    DeviceObjectKind kind;
+    DeviceMaterialKind material;
+    glm::vec3 albedo;
+    float fuzz;
+    float ior;
+    glm::vec3 emission;
+    int is_light; // 0/1
+
+    // Subsurface scattering (when material == SubsurfaceScattering)
+    float scattering_distance;
+    glm::vec3 extinction_coeff;
+
+    // Sphere
+    glm::vec3 center;
+    float radius;
+
+    // Triangle
+    glm::vec3 v0;
+    glm::vec3 v1;
+    glm::vec3 v2;
+
+    // Rect
+    glm::vec3 rect_Q;
+    glm::vec3 rect_u;
+    glm::vec3 rect_v;
+
+    // Disc
+    glm::vec3 disc_center;
+    glm::vec3 disc_normal;
+    float     disc_radius;
+
+    // Checker texture (Lambertian surfaces)
+    int       use_checker;
+    glm::vec3 checker_color1;
+    glm::vec3 checker_color2;
+
+    DeviceMeshView mesh;
+    glm::vec3 mesh_translate;
+    float mesh_scale;
+    glm::vec3 mesh_aabb_min;
+    glm::vec3 mesh_aabb_max;
+
+    DeviceImageView diffuse;
+    DeviceImageView normal;
+    DeviceImageView specular;
+};
+
+static_assert(std::is_trivially_copyable_v<DeviceObjectDesc>);
+
 // One slot per descriptor, shared by full builds and in-place updates.
 // Placement construction sets device vtables. Every pointer in a slot borrows
 // from this pool or the separate mesh/texture caches; no child owns memory.
@@ -133,21 +206,20 @@ __device__ static Hittable* construct_hittable_from_desc(const DeviceObjectDesc&
 			Texture* albedo = nullptr;
 			if (d.use_checker) {
 				albedo = new (&slot.albedo) CheckerTexture(d.checker_color1, d.checker_color2);
-			} else if (d.has_texture && d.d_texture_pixels) {
-				albedo = new (&slot.albedo) ImageTexture(
-					d.d_texture_pixels, d.tex_width, d.tex_height, d.tex_channels);
+			} else if (d.diffuse.pixels) {
+				albedo = new (&slot.albedo) ImageTexture(d.diffuse);
 			} else {
 				albedo = new (&slot.albedo) SolidColor(d.albedo);
 			}
 
 			Texture* normal = nullptr;
-			if (d.has_normal && d.d_normal_pixels) {
-				normal = new (&slot.normal) ImageTexture(d.d_normal_pixels, d.normal_width, d.normal_height, d.normal_channels);
+			if (d.normal.pixels) {
+				normal = new (&slot.normal) ImageTexture(d.normal);
 			}
 
 			Texture* specular = nullptr;
-			if (d.has_specular && d.d_specular_pixels) {
-				specular = new (&slot.specular) ImageTexture(d.d_specular_pixels, d.specular_width, d.specular_height, d.specular_channels);
+			if (d.specular.pixels) {
+				specular = new (&slot.specular) ImageTexture(d.specular);
 			}
 
 			mat = new (&slot.material) Lambertian(albedo, normal, specular);
@@ -177,13 +249,8 @@ __device__ static Hittable* construct_hittable_from_desc(const DeviceObjectDesc&
 		case DeviceObjectKind::Disc:
 			return new (&slot.geometry) Disc(d.disc_center, d.disc_normal, d.disc_radius, mat);
 		case DeviceObjectKind::Mesh:
-			return new (&slot.geometry) TriangleMesh(d.d_mesh_vertices, d.d_mesh_normals, d.d_mesh_uvs, d.mesh_vcount,
-			                         d.d_mesh_indices, d.mesh_icount,
-			                         d.mesh_translate, d.mesh_scale,
-			                         mat,
-			                         d.mesh_aabb_min, d.mesh_aabb_max,
-			                         d.d_mesh_bvh_nodes, d.mesh_bvh_node_count,
-			                         d.d_mesh_reordered_tri_ids, d.mesh_tri_id_count);
+			return new (&slot.geometry) TriangleMesh(d.mesh, d.mesh_translate, d.mesh_scale,
+			                                         mat, d.mesh_aabb_min, d.mesh_aabb_max);
 	}
 	return nullptr;
 }
@@ -525,48 +592,138 @@ KernelInfo::~KernelInfo() {
 	}
 
 	cudaFree(d_slots);
-
-	// Release any cached mesh vertex/index buffers. These are owned by
-	// KernelInfo (not by the device-side TriangleMesh Hittables) so we
-	// free them after the world has been torn down.
-	for (glm::vec3* p : d_mesh_vertex_buffers) {
-		if (p) cudaFree(p);
-	}
-	for (int* p : d_mesh_index_buffers) {
-		if (p) cudaFree(p);
-	}
-	for (MeshBVHNode* p : d_mesh_bvh_buffers) {
-		if (p) cudaFree(p);
-	}
-	for (int* p : d_mesh_tri_id_buffers) {
-		if (p) cudaFree(p);
-	}
-	for (glm::vec2* p : d_mesh_uv_buffers) {
-		if (p) cudaFree(p);
-	}
-	for (glm::vec3* p : d_mesh_normal_buffers) {
-		if (p) cudaFree(p);
-	}
-	for (unsigned char* p : d_texture_pixel_buffers) {
-		if (p) cudaFree(p);
-	}
-	d_mesh_vertex_buffers.clear();
-	d_mesh_index_buffers.clear();
-	d_mesh_vcounts.clear();
-	d_mesh_icounts.clear();
-	d_mesh_bvh_buffers.clear();
-	d_mesh_bvh_node_counts.clear();
-	d_mesh_tri_id_buffers.clear();
-	d_mesh_tri_id_counts.clear();
-	d_mesh_uv_buffers.clear();
-	d_mesh_normal_buffers.clear();
-	d_texture_pixel_buffers.clear();
-	d_texture_widths.clear();
-	d_texture_heights.clear();
-	d_texture_channels.clear();
 }
 
-bool KernelInfo::describe_object(const Scene& scene, const SceneObject& o, DeviceObjectDesc& d) const {
+namespace {
+struct CudaFree {
+	void operator()(void* buffer) const noexcept { cudaFree(buffer); }
+};
+
+template<typename T>
+using DeviceBuffer = std::unique_ptr<T, CudaFree>;
+
+template<typename T>
+DeviceBuffer<T> upload_array(const T* data, size_t count) {
+	if (count == 0) {
+		return {};
+	}
+	T* allocation = nullptr;
+	const size_t bytes = count * sizeof(T);
+	check_cuda_errors(cudaMalloc(&allocation, bytes));
+	DeviceBuffer<T> buffer(allocation);
+	check_cuda_errors(cudaMemcpy(buffer.get(), data, bytes, cudaMemcpyHostToDevice));
+	return buffer;
+}
+} // namespace
+
+// Host-only owners. An upload that fails partway unwinds its completed
+// allocations. Device-side code receives only the read-only view.
+struct UploadedMesh {
+	std::uint64_t revision;
+	size_t vertex_count;
+	size_t index_count;
+	DeviceBuffer<glm::vec3> vertices;
+	DeviceBuffer<glm::vec3> normals;
+	DeviceBuffer<glm::vec2> uvs;
+	DeviceBuffer<int> indices;
+	DeviceBuffer<MeshBVHNode> bvh;
+	DeviceBuffer<int> triangle_ids;
+
+	explicit UploadedMesh(const Mesh& mesh)
+		: revision(mesh.revision()), vertex_count(mesh.vertices.size()), index_count(mesh.indices.size()) {
+		if (vertex_count == 0 || index_count < 3) {
+			return;
+		}
+		if (vertex_count > INT_MAX || index_count > INT_MAX) {
+			throw std::length_error("Mesh exceeds CUDA index range");
+		}
+
+		std::vector<glm::vec3> positions(vertex_count);
+		std::vector<glm::vec3> vertex_normals(vertex_count);
+		std::vector<glm::vec2> vertex_uvs(vertex_count);
+		for (size_t i = 0; i < vertex_count; ++i) {
+			positions[i] = mesh.vertices[i].position;
+			vertex_normals[i] = mesh.vertices[i].normal;
+			vertex_uvs[i] = mesh.vertices[i].uv;
+		}
+		const std::vector<int> triangle_indices(mesh.indices.begin(), mesh.indices.end());
+		auto tree = build_mesh_bvh(positions.data(), mesh.indices.data(), static_cast<int>(index_count / 3));
+
+		vertices = upload_array(positions.data(), vertex_count);
+		normals = upload_array(vertex_normals.data(), vertex_count);
+		uvs = upload_array(vertex_uvs.data(), vertex_count);
+		indices = upload_array(triangle_indices.data(), index_count);
+		bvh = upload_array(tree.nodes.data(), tree.nodes.size());
+		triangle_ids = upload_array(tree.reordered_tri_ids.data(), tree.reordered_tri_ids.size());
+	}
+
+	bool matches(const Mesh& mesh) const {
+		return revision == mesh.revision() && vertex_count == mesh.vertices.size() && index_count == mesh.indices.size();
+	}
+
+	DeviceMeshView view() const {
+		return {vertices.get(), normals.get(), uvs.get(), indices.get(), bvh.get(), triangle_ids.get()};
+	}
+};
+
+struct UploadedImage {
+	std::uint64_t revision;
+	int width;
+	int height;
+	int channels;
+	DeviceBuffer<unsigned char> pixels;
+
+	explicit UploadedImage(const SceneTexture& texture)
+		: revision(texture.revision()), width(texture.width()), height(texture.height()), channels(texture.channels()) {
+		if (texture.raw_pixels()) {
+			pixels = upload_array(texture.raw_pixels(), static_cast<size_t>(width) * height * channels);
+		}
+	}
+
+	DeviceImageView view() const {
+		return {pixels.get(), width, height, channels};
+	}
+};
+
+KernelInfo::AssetCache::AssetCache(const Scene& scene, const AssetCache& current) {
+	meshes.reserve(scene.meshes().size());
+	for (size_t i = 0; i < scene.meshes().size(); ++i) {
+		const Mesh& mesh = *scene.meshes()[i];
+		if (i < current.meshes.size() && current.meshes[i]->matches(mesh)) {
+			meshes.push_back(current.meshes[i]);
+		} else {
+			meshes.push_back(std::make_shared<UploadedMesh>(mesh));
+		}
+	}
+
+	images.reserve(scene.textures().size());
+	for (size_t i = 0; i < scene.textures().size(); ++i) {
+		const SceneTexture& texture = *scene.textures()[i];
+		if (i < current.images.size() && current.images[i]->revision == texture.revision()) {
+			images.push_back(current.images[i]);
+		} else {
+			images.push_back(std::make_shared<UploadedImage>(texture));
+		}
+	}
+}
+
+bool KernelInfo::AssetCache::matches_object_assets(const Scene& scene, const SceneObject& object) const {
+	if (object.kind != ProxyKind::Mesh) {
+		return true;
+	}
+	const int mesh = object.mesh_index;
+	if (mesh >= 0 && static_cast<size_t>(mesh) < meshes.size() && !meshes[mesh]->matches(*scene.meshes()[mesh])) {
+		return false;
+	}
+	for (int i : {object.texture_index, object.normal_texture_index, object.specular_texture_index}) {
+		if (i >= 0 && static_cast<size_t>(i) < images.size() && images[i]->revision != scene.textures()[i]->revision()) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool KernelInfo::AssetCache::describe_object(const Scene& scene, const SceneObject& o, DeviceObjectDesc& d) const {
 	switch (o.material) {
 		case SceneMaterial::Lambertian:           d.material = DeviceMaterialKind::Lambertian; break;
 		case SceneMaterial::Metal:                d.material = DeviceMaterialKind::Metal; break;
@@ -610,68 +767,28 @@ bool KernelInfo::describe_object(const Scene& scene, const SceneObject& o, Devic
 			d.disc_radius = o.radius * o.scale;
 			break;
 		case ProxyKind::Mesh: {
-			if (o.mesh_index < 0 || o.mesh_index >= (int)scene.meshes().size()) {
+			if (o.mesh_index < 0 || static_cast<size_t>(o.mesh_index) >= meshes.size()) {
 				return false;
 			}
-			if (!d_mesh_vertex_buffers[o.mesh_index] ||
-			    !d_mesh_index_buffers[o.mesh_index]) {
+			d.mesh = meshes[o.mesh_index]->view();
+			if (!d.mesh.bvh) {
 				return false;
 			}
 			d.kind = DeviceObjectKind::Mesh;
-			d.d_mesh_vertices = d_mesh_vertex_buffers[o.mesh_index];
-			d.d_mesh_normals  = d_mesh_normal_buffers[o.mesh_index];
-			d.d_mesh_uvs      = d_mesh_uv_buffers[o.mesh_index];
-			d.d_mesh_indices  = d_mesh_index_buffers[o.mesh_index];
-			d.mesh_vcount     = d_mesh_vcounts[o.mesh_index];
-			d.mesh_icount     = d_mesh_icounts[o.mesh_index];
-			d.mesh_translate  = o.position;
-			d.mesh_scale      = o.scale;
-			const Mesh* m = scene.meshes()[o.mesh_index].get();
-			d.mesh_aabb_min = o.position + o.scale * m->local_min;
-			d.mesh_aabb_max = o.position + o.scale * m->local_max;
-			d.d_mesh_bvh_nodes        = d_mesh_bvh_buffers[o.mesh_index];
-			d.mesh_bvh_node_count     = d_mesh_bvh_node_counts[o.mesh_index];
-			d.d_mesh_reordered_tri_ids = d_mesh_tri_id_buffers[o.mesh_index];
-			d.mesh_tri_id_count        = d_mesh_tri_id_counts[o.mesh_index];
-			// Image textures
-			if (o.texture_index >= 0 &&
-			    o.texture_index < (int)d_texture_pixel_buffers.size() &&
-			    d_texture_pixel_buffers[o.texture_index]) {
-				d.d_texture_pixels = d_texture_pixel_buffers[o.texture_index];
-				d.tex_width        = d_texture_widths[o.texture_index];
-				d.tex_height       = d_texture_heights[o.texture_index];
-				d.tex_channels     = d_texture_channels[o.texture_index];
-				d.has_texture      = 1;
-			} else {
-				d.d_texture_pixels = nullptr;
-				d.has_texture      = 0;
-			}
-
-			if (o.normal_texture_index >= 0 &&
-			    o.normal_texture_index < (int)d_texture_pixel_buffers.size() &&
-			    d_texture_pixel_buffers[o.normal_texture_index]) {
-				d.d_normal_pixels = d_texture_pixel_buffers[o.normal_texture_index];
-				d.normal_width    = d_texture_widths[o.normal_texture_index];
-				d.normal_height   = d_texture_heights[o.normal_texture_index];
-				d.normal_channels = d_texture_channels[o.normal_texture_index];
-				d.has_normal      = 1;
-			} else {
-				d.d_normal_pixels = nullptr;
-				d.has_normal      = 0;
-			}
-
-			if (o.specular_texture_index >= 0 &&
-			    o.specular_texture_index < (int)d_texture_pixel_buffers.size() &&
-			    d_texture_pixel_buffers[o.specular_texture_index]) {
-				d.d_specular_pixels = d_texture_pixel_buffers[o.specular_texture_index];
-				d.specular_width    = d_texture_widths[o.specular_texture_index];
-				d.specular_height   = d_texture_heights[o.specular_texture_index];
-				d.specular_channels = d_texture_channels[o.specular_texture_index];
-				d.has_specular      = 1;
-			} else {
-				d.d_specular_pixels = nullptr;
-				d.has_specular      = 0;
-			}
+			d.mesh_translate = o.position;
+			d.mesh_scale = o.scale;
+			const Mesh& mesh = *scene.meshes()[o.mesh_index];
+			d.mesh_aabb_min = o.position + o.scale * mesh.local_min;
+			d.mesh_aabb_max = o.position + o.scale * mesh.local_max;
+			const auto image_view = [this](int index) -> DeviceImageView {
+				if (index < 0 || static_cast<size_t>(index) >= images.size()) {
+					return {};
+				}
+				return images[index]->view();
+			};
+			d.diffuse = image_view(o.texture_index);
+			d.normal = image_view(o.normal_texture_index);
+			d.specular = image_view(o.specular_texture_index);
 			break;
 		}
 		default:
@@ -687,14 +804,15 @@ void KernelInfo::update_object(const Scene& scene, int scene_index) {
 	}
 
 	if (objects.size() != descriptor_indices.size() ||
-	    scene.meshes().size() != d_mesh_vertex_buffers.size() ||
-	    scene.textures().size() != d_texture_pixel_buffers.size()) {
+	    scene.meshes().size() != assets.meshes.size() ||
+	    scene.textures().size() != assets.images.size() ||
+	    !assets.matches_object_assets(scene, objects[scene_index])) {
 		rebuild_world(scene);
 		return;
 	}
 
 	DeviceObjectDesc updated{};
-	const bool renderable = describe_object(scene, objects[scene_index], updated);
+	const bool renderable = assets.describe_object(scene, objects[scene_index], updated);
 	const int i = descriptor_indices[scene_index];
 	if (renderable != (i >= 0)) {
 		rebuild_world(scene);
@@ -712,6 +830,9 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 	if (required > static_cast<size_t>(std::numeric_limits<int>::max())) {
 		throw std::length_error("Too many scene objects for CUDA descriptor indices");
 	}
+	AssetCache next_assets(scene, assets);
+	const bool assets_changed = assets.meshes != next_assets.meshes || assets.images != next_assets.images;
+
 	// Keep the old pool live until the new world has been assembled. This
 	// also preserves its views if a larger allocation cannot be obtained.
 	SceneObjectSlot* slots = d_slots;
@@ -722,7 +843,7 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 	BVHNode* nodes = d_bvh_nodes;
 	std::unique_ptr<SceneObjectSlot, decltype(&cudaFree)> new_pool(nullptr, cudaFree);
 	size_t capacity = d_scene_capacity;
-	if (required > capacity) {
+	if (required > capacity || (assets_changed && required > 0)) {
 		// A binary BVH over N leaves requires at most 2*N-1 nodes, including
 		// the one-child wrappers used for singleton ranges.
 		static_assert(alignof(SceneObjectSlot) >= alignof(DeviceObjectDesc));
@@ -730,7 +851,9 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 		static_assert(alignof(BVHNode) >= alignof(Hittable*));
 		constexpr size_t bytes_per_slot = sizeof(SceneObjectSlot) + sizeof(DeviceObjectDesc)
 		                                + 2 * sizeof(BVHNode) + 3 * sizeof(Hittable*);
-		capacity = std::max(required, capacity + capacity / 2);
+		if (required > capacity) {
+			capacity = std::max(required, capacity + capacity / 2);
+		}
 		cudaError_t result = cudaMalloc(&slots, capacity * bytes_per_slot);
 		if (result == cudaErrorMemoryAllocation && capacity > required) {
 			// Retry without spare slots when memory is tight.
@@ -747,186 +870,6 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 		lights = sorted_objects + capacity;
 	}
 
-	// ---- Mesh buffer lifetime management ---------------------------------
-	// KernelInfo owns a device-side vertex/index buffer per scene mesh,
-	// indexed by mesh_index. A rebuild only re-uploads a slot when its
-	// vertex/index count doesn't match the cached version (i.e., a new or
-	// resized mesh). Dragging a mesh only mutates position/scale, which lives
-	// in the descriptor, so the cached buffers are reused across drags.
-	const auto& scene_meshes = scene.meshes();
-
-	// Free any stale slots beyond the current mesh count (e.g., a mesh was
-	// removed between rebuilds — not exercised yet but keeps the vectors
-	// honest).
-	for (size_t i = scene_meshes.size(); i < d_mesh_vertex_buffers.size(); i++) {
-		if (d_mesh_vertex_buffers[i]) cudaFree(d_mesh_vertex_buffers[i]);
-		if (d_mesh_index_buffers[i]) cudaFree(d_mesh_index_buffers[i]);
-	}
-	for (size_t i = scene_meshes.size(); i < d_mesh_bvh_buffers.size(); i++) {
-		if (d_mesh_bvh_buffers[i]) cudaFree(d_mesh_bvh_buffers[i]);
-		if (d_mesh_tri_id_buffers[i]) cudaFree(d_mesh_tri_id_buffers[i]);
-	}
-	for (size_t i = scene_meshes.size(); i < d_mesh_uv_buffers.size(); i++) {
-		if (d_mesh_uv_buffers[i]) cudaFree(d_mesh_uv_buffers[i]);
-	}
-	for (size_t i = scene_meshes.size(); i < d_mesh_normal_buffers.size(); i++) {
-		if (d_mesh_normal_buffers[i]) cudaFree(d_mesh_normal_buffers[i]);
-	}
-	d_mesh_vertex_buffers.resize(scene_meshes.size(), nullptr);
-	d_mesh_index_buffers.resize(scene_meshes.size(), nullptr);
-	d_mesh_vcounts.resize(scene_meshes.size(), 0);
-	d_mesh_icounts.resize(scene_meshes.size(), 0);
-	d_mesh_bvh_buffers.resize(scene_meshes.size(), nullptr);
-	d_mesh_bvh_node_counts.resize(scene_meshes.size(), 0);
-	d_mesh_tri_id_buffers.resize(scene_meshes.size(), nullptr);
-	d_mesh_tri_id_counts.resize(scene_meshes.size(), 0);
-	d_mesh_uv_buffers.resize(scene_meshes.size(), nullptr);
-	d_mesh_normal_buffers.resize(scene_meshes.size(), nullptr);
-
-	for (size_t i = 0; i < scene_meshes.size(); i++) {
-		const Mesh* m = scene_meshes[i].get();
-		int vcount = (int)m->vertices.size();
-		int icount = (int)m->indices.size();
-
-		// Skip re-upload when the cache already holds this mesh.
-		if (d_mesh_vertex_buffers[i] && d_mesh_vcounts[i] == vcount &&
-		    d_mesh_icounts[i] == icount) {
-			continue;
-		}
-
-		if (d_mesh_vertex_buffers[i]) cudaFree(d_mesh_vertex_buffers[i]);
-		if (d_mesh_index_buffers[i]) cudaFree(d_mesh_index_buffers[i]);
-		if (d_mesh_uv_buffers[i])    cudaFree(d_mesh_uv_buffers[i]);
-		if (d_mesh_normal_buffers[i]) cudaFree(d_mesh_normal_buffers[i]);
-		d_mesh_vertex_buffers[i] = nullptr;
-		d_mesh_index_buffers[i] = nullptr;
-		d_mesh_uv_buffers[i] = nullptr;
-		d_mesh_normal_buffers[i] = nullptr;
-
-		if (vcount <= 0 || icount <= 0) {
-			d_mesh_vcounts[i] = 0;
-			d_mesh_icounts[i] = 0;
-			continue;
-		}
-
-		// Pack positions, UVs, and indices into flat host buffers.
-		std::vector<glm::vec3> positions;
-		positions.reserve(vcount);
-		for (const auto& v : m->vertices) positions.push_back(v.position);
-
-		std::vector<glm::vec3> normals;
-		normals.reserve(vcount);
-		for (const auto& v : m->vertices) normals.push_back(v.normal);
-
-		std::vector<glm::vec2> uvs;
-		uvs.reserve(vcount);
-		for (const auto& v : m->vertices) uvs.push_back(v.uv);
-
-		std::vector<int> int_indices;
-		int_indices.reserve(icount);
-		for (unsigned int u : m->indices) int_indices.push_back((int)u);
-
-		glm::vec3* d_verts = nullptr;
-		glm::vec3* d_norm = nullptr;
-		glm::vec2* d_uv = nullptr;
-		int* d_idx = nullptr;
-		check_cuda_errors(cudaMalloc(&d_verts, sizeof(glm::vec3) * vcount));
-		check_cuda_errors(cudaMemcpy(d_verts, positions.data(),
-		                             sizeof(glm::vec3) * vcount,
-		                             cudaMemcpyHostToDevice));
-		check_cuda_errors(cudaMalloc(&d_norm, sizeof(glm::vec3) * vcount));
-		check_cuda_errors(cudaMemcpy(d_norm, normals.data(),
-		                             sizeof(glm::vec3) * vcount,
-		                             cudaMemcpyHostToDevice));
-		check_cuda_errors(cudaMalloc(&d_uv, sizeof(glm::vec2) * vcount));
-		check_cuda_errors(cudaMemcpy(d_uv, uvs.data(),
-		                             sizeof(glm::vec2) * vcount,
-		                             cudaMemcpyHostToDevice));
-		check_cuda_errors(cudaMalloc(&d_idx, sizeof(int) * icount));
-		check_cuda_errors(cudaMemcpy(d_idx, int_indices.data(),
-		                             sizeof(int) * icount,
-		                             cudaMemcpyHostToDevice));
-
-		d_mesh_vertex_buffers[i] = d_verts;
-		d_mesh_normal_buffers[i] = d_norm;
-		d_mesh_uv_buffers[i] = d_uv;
-		d_mesh_index_buffers[i] = d_idx;
-		d_mesh_vcounts[i] = vcount;
-		d_mesh_icounts[i] = icount;
-
-		// Build per-mesh BVH on the host and upload the flat node array
-		// plus the reordered triangle-ID array to the device.
-		if (d_mesh_bvh_buffers[i]) cudaFree(d_mesh_bvh_buffers[i]);
-		if (d_mesh_tri_id_buffers[i]) cudaFree(d_mesh_tri_id_buffers[i]);
-		d_mesh_bvh_buffers[i] = nullptr;
-		d_mesh_tri_id_buffers[i] = nullptr;
-
-		int tri_count = icount / 3;
-		MeshBVHBuildResult bvh = build_mesh_bvh(
-			positions.data(), m->indices.data(), tri_count);
-
-		int bvh_node_count = (int)bvh.nodes.size();
-		int tri_id_count   = (int)bvh.reordered_tri_ids.size();
-
-		if (bvh_node_count > 0) {
-			MeshBVHNode* d_bvh = nullptr;
-			check_cuda_errors(cudaMalloc(&d_bvh, sizeof(MeshBVHNode) * bvh_node_count));
-			check_cuda_errors(cudaMemcpy(d_bvh, bvh.nodes.data(),
-			                             sizeof(MeshBVHNode) * bvh_node_count,
-			                             cudaMemcpyHostToDevice));
-			d_mesh_bvh_buffers[i] = d_bvh;
-		}
-		d_mesh_bvh_node_counts[i] = bvh_node_count;
-
-		if (tri_id_count > 0) {
-			int* d_tri_ids = nullptr;
-			check_cuda_errors(cudaMalloc(&d_tri_ids, sizeof(int) * tri_id_count));
-			check_cuda_errors(cudaMemcpy(d_tri_ids, bvh.reordered_tri_ids.data(),
-			                             sizeof(int) * tri_id_count,
-			                             cudaMemcpyHostToDevice));
-			d_mesh_tri_id_buffers[i] = d_tri_ids;
-		}
-		d_mesh_tri_id_counts[i] = tri_id_count;
-	}
-
-	// ---- Texture pixel buffer upload -------------------------------------
-	const auto& scene_textures = scene.textures();
-
-	for (size_t i = scene_textures.size(); i < d_texture_pixel_buffers.size(); i++) {
-		if (d_texture_pixel_buffers[i]) cudaFree(d_texture_pixel_buffers[i]);
-	}
-	d_texture_pixel_buffers.resize(scene_textures.size(), nullptr);
-	d_texture_widths.resize(scene_textures.size(), 0);
-	d_texture_heights.resize(scene_textures.size(), 0);
-	d_texture_channels.resize(scene_textures.size(), 0);
-
-	for (size_t i = 0; i < scene_textures.size(); i++) {
-		const SceneTexture* tex = scene_textures[i].get();
-		if (!tex->raw_pixels()) continue;
-
-		int w  = tex->width();
-		int h  = tex->height();
-		int ch = tex->channels();
-
-		// Skip re-upload when size matches cached version.
-		if (d_texture_pixel_buffers[i] &&
-		    d_texture_widths[i] == w && d_texture_heights[i] == h &&
-		    d_texture_channels[i] == ch) {
-			continue;
-		}
-		if (d_texture_pixel_buffers[i]) cudaFree(d_texture_pixel_buffers[i]);
-
-		size_t byte_count = (size_t)w * h * ch;
-		unsigned char* d_pix = nullptr;
-		check_cuda_errors(cudaMalloc(&d_pix, byte_count));
-		check_cuda_errors(cudaMemcpy(d_pix, tex->raw_pixels(), byte_count,
-		                             cudaMemcpyHostToDevice));
-		d_texture_pixel_buffers[i] = d_pix;
-		d_texture_widths[i]  = w;
-		d_texture_heights[i] = h;
-		d_texture_channels[i] = ch;
-	}
-
 	// Invalid mesh objects are skipped. Retain the scene-to-descriptor mapping
 	// so editing a later object still addresses the correct device slot.
 	const auto& objects = scene.objects();
@@ -935,7 +878,7 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 	std::vector<int> new_indices(objects.size(), -1);
 	for (size_t i = 0; i < objects.size(); ++i) {
 		DeviceObjectDesc desc{};
-		if (describe_object(scene, objects[i], desc)) {
+		if (next_assets.describe_object(scene, objects[i], desc)) {
 			new_indices[i] = static_cast<int>(descs.size());
 			descs.push_back(desc);
 		}
@@ -964,5 +907,6 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 		d_lights = lights;
 		d_scene_capacity = capacity;
 	}
+	assets = std::move(next_assets);
 	descriptor_indices = std::move(new_indices);
 }

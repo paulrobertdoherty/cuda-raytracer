@@ -4,7 +4,7 @@
 #include "Hittable.h"
 #include "Material.h"
 #include "AABB.h"
-#include "MeshBVHNode.h"
+#include "DeviceAssetViews.h"
 #include "Constants.h"
 
 // Frisvad-Duff revised ONB: builds an orthonormal basis (tangent, bitangent)
@@ -22,38 +22,16 @@ __device__ inline void build_onb_frisvad(const glm::vec3& n, glm::vec3& tangent,
 // KernelInfo's mesh cache. Individual triangles share the same material.
 class TriangleMesh : public Hittable {
 public:
-	glm::vec3* d_vertices; // device pointer, count = vertex_count
-	glm::vec3* d_normals;  // device pointer, count = vertex_count (may be nullptr)
-	glm::vec2* d_uvs;      // device pointer, count = vertex_count (may be nullptr)
-	int* d_indices;        // device pointer, count = index_count (multiple of 3)
-	int vertex_count;
-	int index_count;
+	DeviceMeshView mesh;
 	glm::vec3 translate;
 	float scale;
 	AABB world_aabb;
 	Material* mat_ptr;
 
-	// Per-mesh BVH (flat array in local space, built on host).
-	MeshBVHNode* d_bvh_nodes;
-	int bvh_node_count;
-	int* d_reordered_tri_ids;
-	int tri_id_count;
-
-	__device__ TriangleMesh(glm::vec3* verts, glm::vec3* normals, glm::vec2* uvs, int vcount,
-	                         int* indices, int icount,
-	                         glm::vec3 translate, float scale,
-	                         Material* mat,
-	                         glm::vec3 world_min, glm::vec3 world_max,
-	                         MeshBVHNode* bvh_nodes, int bvh_count,
-	                         int* reordered_tri_ids, int tri_count)
-		: Hittable(HittableKind::TriangleMesh),
-		  d_vertices(verts), d_normals(normals), d_uvs(uvs), d_indices(indices),
-		  vertex_count(vcount), index_count(icount),
-		  translate(translate), scale(scale),
-		  world_aabb(world_min, world_max), mat_ptr(mat),
-		  d_bvh_nodes(bvh_nodes), bvh_node_count(bvh_count),
-		  d_reordered_tri_ids(reordered_tri_ids), tri_id_count(tri_count) {}
-
+	__device__ TriangleMesh(DeviceMeshView mesh, glm::vec3 translate, float scale,
+	                         Material* mat, glm::vec3 world_min, glm::vec3 world_max)
+		: Hittable(HittableKind::TriangleMesh), mesh(mesh), translate(translate), scale(scale),
+		  world_aabb(world_min, world_max), mat_ptr(mat) {}
 
 	// Inline AABB slab test operating on raw min/max + precomputed inv_dir.
 	__device__ static bool slab_test(const glm::vec3& bmin, const glm::vec3& bmax,
@@ -78,12 +56,12 @@ public:
 		// overlap each other or any other address; loads can be reordered,
 		// CSE'd across iterations, and routed through the read-only cache
 		// (effectively __ldg).
-		const glm::vec3* __restrict__ verts    = d_vertices;
-		const int*       __restrict__ idx      = d_indices;
-		const MeshBVHNode* __restrict__ bvh    = d_bvh_nodes;
-		const int*       __restrict__ tri_ids  = d_reordered_tri_ids;
-		const glm::vec2* __restrict__ uvs      = d_uvs;
-		const glm::vec3* __restrict__ normals  = d_normals;
+		const glm::vec3* __restrict__ verts    = mesh.vertices;
+		const int*       __restrict__ idx      = mesh.indices;
+		const MeshBVHNode* __restrict__ bvh    = mesh.bvh;
+		const int*       __restrict__ tri_ids  = mesh.triangle_ids;
+		const glm::vec2* __restrict__ uvs      = mesh.uvs;
+		const glm::vec3* __restrict__ normals  = mesh.normals;
 
 		// Inverse-transform ray from world space to local space.
 		// World vertex = translate + scale * local_vertex, so:

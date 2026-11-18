@@ -1,4 +1,5 @@
 #include "GLTexture.h"
+#include "AssetRevision.h"
 
 #include "stb_image.h"
 
@@ -19,12 +20,18 @@ GLTexture::~GLTexture() {
 bool GLTexture::load(const std::string& path) {
 	stbi_set_flip_vertically_on_load(1);
 
-	unsigned char* data = stbi_load(path.c_str(), &_width, &_height, &_channels, 0);
+	int width;
+	int height;
+	int channels;
+	unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 0);
 	if (!data) {
 		std::cerr << "[GLTexture] stbi_load failed for " << path
 		          << ": " << stbi_failure_reason() << "\n";
 		return false;
 	}
+	_width = width;
+	_height = height;
+	_channels = channels;
 
 	GLenum fmt = GL_RGB;
 	GLenum internal_fmt = GL_RGB8;
@@ -33,7 +40,9 @@ bool GLTexture::load(const std::string& path) {
 	else if (_channels == 3) { fmt = GL_RGB; internal_fmt = GL_RGB8; }
 	else if (_channels == 4) { fmt = GL_RGBA; internal_fmt = GL_RGBA8; }
 
-	glGenTextures(1, &_id);
+	if (!_id) {
+		glGenTextures(1, &_id);
+	}
 	glBindTexture(GL_TEXTURE_2D, _id);
 
 	// Reasonable defaults.
@@ -49,7 +58,9 @@ bool GLTexture::load(const std::string& path) {
 	glGenerateMipmap(GL_TEXTURE_2D);
 
 	// Retain raw pixels for CUDA upload (freed in destructor).
+	stbi_image_free(_pixels);
 	_pixels = data;
+	_revision = next_asset_revision();
 
 	std::cout << "[GLTexture] Loaded " << path << " — "
 	          << _width << "x" << _height << " (" << _channels << " channels)" << "\n";

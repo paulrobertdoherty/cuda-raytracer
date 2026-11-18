@@ -16,10 +16,6 @@ Window::Window(int width, int height, const RenderParams& params, std::string ob
 	if (_params.preview_scale < 1) {
 		_params.preview_scale = 1;
 	}
-	_frame_count = 1;
-	_camera_moving = false;
-	_render_mode = RenderMode::PREVIEW;
-	_rasterization_enabled = false;
 	_obj_path = std::move(obj_path);
 	_texture_path = std::move(texture_path);
 
@@ -156,19 +152,15 @@ void Window::scene_structure_changed() {
 	_input_handler->input().selected_idx = -1;
 	_render_loop->rasterizer().set_selected(-1);
 	_scene_controller->rebuild_world(_render_loop->renderer());
-	_frame_count = 1;
+	_render_state.reset_accumulation();
 }
 
 void Window::reset_accumulation() {
-	_frame_count = 1;
+	_render_state.reset_accumulation();
 }
 
 void Window::start_final_render() {
-	if (_render_mode == RenderMode::PREVIEW) {
-		_render_mode = RenderMode::RENDER_FINAL;
-		_frame_count = 1;
-		_rasterization_enabled = false;
-	}
+	_render_state.start_final();
 }
 
 void Window::tick() {
@@ -179,35 +171,27 @@ void Window::tick() {
 	_gui->new_frame();
 
 	bool gui_was_visible = _gui->visible();
-	bool was_raster_enabled = _rasterization_enabled;
+	bool was_raster_enabled = _render_state.raster_preview_active();
 
 	_input_handler->tick(_window.get(), *_gui, *_scene_controller,
 	                     _render_loop->renderer(),
 	                     _render_loop->rasterizer(),
-	                     _window_width, _window_height,
-	                     _render_mode, _frame_count, _camera_moving,
-	                     _rasterization_enabled, t_diff);
+	                     _render_state, t_diff);
 
 	if (_gui->visible() != gui_was_visible) {
 		update_viewport();
 	}
 
-	if (was_raster_enabled && !_rasterization_enabled) {
+	if (was_raster_enabled && !_render_state.raster_preview_active()) {
 		glClearTexImage(_render_loop->accum_texture(), 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 	}
 
 	_gui->draw(*this);
 
-	_render_loop->render_frame(_window.get(), _render_mode, _params,
-	                           _frame_count, _camera_moving,
-	                           _rasterization_enabled);
+	_render_loop->render_frame(_window.get(), _render_state, _params);
 
 	_gui->render();
 
 	glfwSwapBuffers(_window.get());
 	glfwPollEvents();
-
-	if (_render_mode != RenderMode::IDLE) {
-		_frame_count++;
-	}
 }

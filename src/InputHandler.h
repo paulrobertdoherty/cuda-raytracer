@@ -2,7 +2,7 @@
 
 #include "Input.h"
 #include "raytracer/kernel.h"
-#include "RenderMode.h"
+#include "RenderState.h"
 
 class Gui;
 class Rasterizer;
@@ -26,11 +26,7 @@ public:
 	          SceneController& scene_controller,
 	          KernelInfo& renderer,
 	          Rasterizer& rasterizer,
-	          int window_w, int window_h,
-	          RenderMode& render_mode,
-	          int& frame_count,
-	          bool& camera_moving,
-	          bool& raster_enabled,
+	          RenderState& state,
 	          float t_diff);
 
 private:

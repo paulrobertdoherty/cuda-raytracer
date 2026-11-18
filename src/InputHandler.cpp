@@ -19,11 +19,7 @@ void InputHandler::tick(GLFWwindow* window,
                         SceneController& scene_controller,
                         KernelInfo& renderer,
                         Rasterizer& rasterizer,
-                        int /*window_w*/, int /*window_h*/,
-                        RenderMode& render_mode,
-                        int& frame_count,
-                        bool& camera_moving,
-                        bool& raster_enabled,
+                        RenderState& state,
                         float t_diff) {
 	_input.process_quit(window);
 
@@ -48,30 +44,33 @@ void InputHandler::tick(GLFWwindow* window,
 
 	bool enter_down = glfwGetKey(window, GLFW_KEY_ENTER) == GLFW_PRESS;
 	if (enter_down && !_enter_was_pressed && !imgui_kb) {
-		if (render_mode == RenderMode::PREVIEW) {
-			render_mode = RenderMode::RENDER_FINAL;
-			frame_count = 1;
-			raster_enabled = false;
-		} else if (render_mode == RenderMode::IDLE) {
-			render_mode = RenderMode::PREVIEW;
-		}
+		state.toggle_final();
 	}
 	_enter_was_pressed = enter_down;
 
+	// Track key edges in every mode so held keys do not fire on resuming preview.
 	bool r_down = glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS;
-	if (r_down && !_r_was_pressed && render_mode == RenderMode::PREVIEW) {
-		raster_enabled = !raster_enabled;
-		frame_count = 1;
-	}
+	bool toggle_raster = r_down && !_r_was_pressed;
 	_r_was_pressed = r_down;
-
 	bool tab_down = glfwGetKey(window, GLFW_KEY_TAB) == GLFW_PRESS;
-	if (tab_down && !_tab_was_pressed && render_mode == RenderMode::PREVIEW && !imgui_kb) {
+	bool toggle_edit = tab_down && !_tab_was_pressed && !imgui_kb;
+	_tab_was_pressed = tab_down;
+
+	auto* preview = state.active_preview();
+	if (!preview) {
+		return;
+	}
+
+	if (toggle_raster) {
+		preview->raster_enabled = !preview->raster_enabled;
+		state.reset_accumulation();
+	}
+	if (toggle_edit) {
 		_input.edit_mode = !_input.edit_mode;
 		if (_input.edit_mode) {
 			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-			raster_enabled = true;
-			frame_count = 1;
+			preview->raster_enabled = true;
+			state.reset_accumulation();
 			_input.lmb_was_down = false;
 			_input.selected_idx = -1;
 		} else {
@@ -86,35 +85,32 @@ void InputHandler::tick(GLFWwindow* window,
 			rasterizer.set_selected(-1);
 		}
 	}
-	_tab_was_pressed = tab_down;
 
-	if (render_mode == RenderMode::PREVIEW) {
-		if (_input.edit_mode) {
-			if (!imgui_mouse) {
-				int w = 0;
-				int h = 0;
-				glfwGetWindowSize(window, &w, &h);
-				int moved_index = _input.process_edit_mouse(window,
-					scene_controller.scene(), renderer.camera_info, w, h);
-				if (moved_index >= 0) {
-					renderer.update_object(scene_controller.scene(), moved_index);
-				}
+	if (_input.edit_mode) {
+		if (!imgui_mouse) {
+			int w = 0;
+			int h = 0;
+			glfwGetWindowSize(window, &w, &h);
+			int moved_index = _input.process_edit_mouse(window,
+				scene_controller.scene(), renderer.camera_info, w, h);
+			if (moved_index >= 0) {
+				renderer.update_object(scene_controller.scene(), moved_index);
 			}
-
-			rasterizer.set_selected(_input.selected_idx);
-
-			if (_input.lmb_down) {
-				frame_count = 1;
-			}
-			camera_moving = false;
-		} else if (!imgui_kb) {
-			_input.process_camera_movement(window, renderer, t_diff);
-			camera_moving = _input.has_camera_moved();
-			if (camera_moving) {
-				frame_count = 1;
-			}
-		} else {
-			camera_moving = false;
 		}
+
+		rasterizer.set_selected(_input.selected_idx);
+
+		if (_input.lmb_down) {
+			state.reset_accumulation();
+		}
+		preview->camera_moving = false;
+	} else if (!imgui_kb) {
+		_input.process_camera_movement(window, renderer, t_diff);
+		preview->camera_moving = _input.has_camera_moved();
+		if (preview->camera_moving) {
+			state.reset_accumulation();
+		}
+	} else {
+		preview->camera_moving = false;
 	}
 }

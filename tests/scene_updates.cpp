@@ -1,7 +1,9 @@
+#include "Mesh.h"
 #include "Scene.h"
 #include "raytracer/kernel.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -108,9 +110,60 @@ void regrow_scene(Scene& scene, KernelInfo& edited) {
     edited.update_object(scene, 12);
 }
 
+int add_shared_mesh(Scene& scene, const std::filesystem::path& data) {
+    const int index = scene.add_obj_from_file((data / "tetrahedron.obj").string(),
+        (data / "warm.ppm").string(), glm::vec3(0, 0.45f, -1), 0.7f);
+    if (index < 0 || scene.objects()[index].texture_index < 0) {
+        throw std::runtime_error("Could not load textured mesh fixture");
+    }
+    // Each instance borrows the same image in all three material slots.
+    auto& mesh_object = scene.mutable_objects()[index];
+    mesh_object.normal_texture_index = mesh_object.texture_index;
+    mesh_object.specular_texture_index = mesh_object.texture_index;
+    SceneObject copy = mesh_object;
+    copy.position.x += 1.5f;
+    scene.mutable_objects().push_back(copy);
+    return index;
+}
+
+void replace_mesh_data(Scene& scene, KernelInfo& edited, const std::filesystem::path& data) {
+    const int index = add_shared_mesh(scene, data);
+    // Emission makes the silhouette independent of lighting.
+    auto& object = scene.mutable_objects()[index];
+    object.material = SceneMaterial::Emissive;
+    object.emission = glm::vec3(0.8f);
+    edited.rebuild_world(scene);
+
+    Mesh& mesh = *scene.meshes()[object.mesh_index];
+    for (auto& vertex : mesh.vertices) {
+        vertex.position.x *= 0.2f;
+    }
+    mesh.upload();
+    // Notifying one changed instance must refresh every borrower of the mesh.
+    edited.update_object(scene, index);
+}
+
+void replace_texture_data(Scene& scene, KernelInfo& edited, const std::filesystem::path& data) {
+    const int index = add_shared_mesh(scene, data);
+    scene.add_sphere(glm::vec3(-0.7f, 1.7f, 1), 0.5f, SceneMaterial::Emissive,
+                     glm::vec3(1), 0, 1, glm::vec3(10), true);
+    edited.rebuild_world(scene);
+    const int texture_index = scene.objects()[index].texture_index;
+    scene.remove_object(index + 1); // The first mesh still borrows the same buffers.
+    if (!scene.textures()[texture_index]->load((data / "cool.ppm").string())) {
+        throw std::runtime_error("Could not reload texture fixture");
+    }
+    edited.rebuild_world(scene);
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc != 2) {
+        std::cerr << "Usage: scene_updates_test <fixture directory>\n";
+        return 1;
+    }
+    const std::filesystem::path data = argv[1];
     try {
         compare_with_rebuild("moved BVH leaf", move_leaf);
         compare_with_rebuild("single leaf with a replacement material", replace_material);
@@ -120,6 +173,10 @@ int main() {
         }
         compare_with_rebuild("empty world", empty_scene);
         compare_with_rebuild("regrown world", regrow_scene);
+        compare_with_rebuild("shared mesh with replaced vertex data",
+            [&](Scene& scene, KernelInfo& renderer) { replace_mesh_data(scene, renderer, data); });
+        compare_with_rebuild("remaining mesh with a replaced texture",
+            [&](Scene& scene, KernelInfo& renderer) { replace_texture_data(scene, renderer, data); });
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
