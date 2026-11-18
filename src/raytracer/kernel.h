@@ -4,7 +4,6 @@
 #include "cuda_runtime.h"
 #include <curand_kernel.h>
 #include "World.h"
-#include "FrameBuffer.h"
 
 #include <thrust/device_ptr.h>
 
@@ -23,7 +22,7 @@ constexpr int DEFAULT_TILE_SIZE = 64;
 // `new`s the appropriate Hittable/Material for each entry.
 // ---------------------------------------------------------------------------
 
-enum class DeviceObjectKind : int {
+enum class DeviceObjectKind : std::uint8_t {
     Sphere = 0,
     Triangle = 1,
     Rect = 2,
@@ -31,7 +30,7 @@ enum class DeviceObjectKind : int {
     Disc = 4
 };
 
-enum class DeviceMaterialKind : int {
+enum class DeviceMaterialKind : std::uint8_t {
     Lambertian = 0,
     Metal = 1,
     Dielectric = 2,
@@ -128,7 +127,7 @@ struct KernelInfo {
 
     cudaGraphicsResource_t resources;
     CameraInfo camera_info;
-    FrameBuffer* frame_buffer;
+    uint32_t* d_mapped_pixels = nullptr; // Valid between map_pbo() and unmap_pbo().
 
     int nx, ny;
     int samples;

@@ -6,6 +6,8 @@
 
 class Texture {
 public:
+	// NVCC infers a host execution space for an explicitly defaulted destructor.
+	__device__ virtual ~Texture() {}
 	__device__ virtual glm::vec3 value(float u, float v, const glm::vec3& p) const = 0;
 };
 
@@ -43,7 +45,7 @@ public:
 	Texture* even = nullptr;
 	Texture* odd = nullptr;
 
-	__device__ ~CheckerTexture() {
+	__device__ ~CheckerTexture() override {
 		delete even;
 		delete odd;
 	}

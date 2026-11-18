@@ -22,37 +22,43 @@ endif()
 
 # The configurations listed below were modified and taken from https://github.com/Shot511/OpenGLSampleCmake
 
-# Add source files
-file(GLOB_RECURSE SOURCE_FILES
-	${CMAKE_SOURCE_DIR}/src/*.c
-	${CMAKE_SOURCE_DIR}/src/*.cpp
-	${CMAKE_SOURCE_DIR}/src/raytracer/*.cu)
-
-# Add header files
-file(GLOB_RECURSE HEADER_FILES
-	${CMAKE_SOURCE_DIR}/src/*.h
-	${CMAKE_SOURCE_DIR}/src/*.hpp
-	${CMAKE_SOURCE_DIR}/src/raytracer/*.h)
+set(SOURCE_FILES
+	src/main.cpp
+	src/cuda_errors.cpp
+	src/Mesh.cpp
+	src/MeshBVHBuilder.cpp
+	src/ObjLoader.cpp
+	src/Scene.cpp
+	src/SceneController.cpp
+	src/stb_image_impl.cpp
+	src/raytracer/kernel.cu)
 
 if(HEADLESS)
-	# Exclude OpenGL-dependent source files from headless builds
-	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/Window\\.cpp$")
-	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/RenderLoop\\.cpp$")
-	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/InputHandler\\.cpp$")
-	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/Quad\\.cpp$")
-	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/Rasterizer\\.cpp$")
-	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/Input\\.cpp$")
-	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/Picker\\.cpp$")
-	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/ShaderManager\\.cpp$")
-	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/Gui\\.cpp$")
-	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/GLTexture\\.cpp$")
+	set(BACKEND_DIR headless)
+	list(APPEND SOURCE_FILES src/HeadlessTexture.cpp)
 else()
-	# Exclude headless-only source files from GUI builds
-	list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/HeadlessTexture\\.cpp$")
+	set(BACKEND_DIR display)
+	list(APPEND SOURCE_FILES
+		src/GLTexture.cpp
+		src/Gui.cpp
+		src/Input.cpp
+		src/InputHandler.cpp
+		src/Picker.cpp
+		src/Quad.cpp
+		src/Rasterizer.cpp
+		src/RenderLoop.cpp
+		src/ShaderManager.cpp
+		src/Window.cpp)
 endif()
+list(APPEND SOURCE_FILES
+	src/${BACKEND_DIR}/Application.cpp
+	src/${BACKEND_DIR}/MeshDisplay.cpp)
+
+file(GLOB_RECURSE HEADER_FILES src/*.h src/*.hpp)
 
 # Add source to this project's executable.
 add_executable(${PROJECT_NAME} ${HEADER_FILES} ${SOURCE_FILES})
+target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/src/${BACKEND_DIR}")
 
 # Set CUDA architecture to the host's GPU architecture (default: native, override with -DCMAKE_CUDA_ARCHITECTURES=XX)
 if(DEFINED CMAKE_CUDA_ARCHITECTURES)
@@ -94,8 +100,6 @@ if(EXISTS "${CUDAToolkit_INCLUDE_DIRS}/cccl")
 endif()
 
 if(HEADLESS)
-	target_compile_definitions(${PROJECT_NAME} PRIVATE HEADLESS_BUILD)
-
 	# Headless: only need CUDA and GLM
 	set(LIBS ${CMAKE_DL_LIBS} CUDA::cudart CUDA::curand)
 else()
@@ -210,4 +214,9 @@ endif()
 if(IS_CUDA_DEBUG)
 	target_compile_options(${PROJECT_NAME} PRIVATE "$<$<AND:$<CONFIG:Debug>,$<COMPILE_LANGUAGE:CUDA>>:-G>")
 	message(STATUS "CUDA_DEBUG is ON")
+endif()
+
+include(CTest)
+if(BUILD_TESTING)
+	add_subdirectory(tests)
 endif()

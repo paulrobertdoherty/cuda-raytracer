@@ -9,14 +9,18 @@
 #include "ImGuiFileDialog.h"
 
 #include <cstring>
+#include <stdexcept>
 
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
 
-Gui::Gui(GLFWwindow* window) {
+Gui::Gui() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+}
+
+Gui::Gui(GLFWwindow* window) : Gui() {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
@@ -25,13 +29,22 @@ Gui::Gui(GLFWwindow* window) {
     style.WindowRounding = 0.0f;
     style.FrameRounding = 2.0f;
 
-    ImGui_ImplGlfw_InitForOpenGL(window, true);
-    ImGui_ImplOpenGL3_Init("#version 460");
+    if (!ImGui_ImplGlfw_InitForOpenGL(window, true)) {
+        throw std::runtime_error("Failed to initialize the ImGui GLFW backend");
+    }
+    if (!ImGui_ImplOpenGL3_Init("#version 460")) {
+        throw std::runtime_error("Failed to initialize the ImGui OpenGL backend");
+    }
 }
 
 Gui::~Gui() {
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.BackendRendererUserData) {
+        ImGui_ImplOpenGL3_Shutdown();
+    }
+    if (io.BackendPlatformUserData) {
+        ImGui_ImplGlfw_Shutdown();
+    }
     ImGui::DestroyContext();
 }
 
@@ -62,10 +75,12 @@ bool Gui::wants_keyboard() {
 // Material helpers
 // ---------------------------------------------------------------------------
 
-static const char* material_names[] = { "Lambertian", "Metal", "Dielectric", "Emissive", "Subsurface" };
-static const int material_count = 5;
+namespace {
 
-static SceneMaterial material_from_index(int idx) {
+const char* material_names[] = { "Lambertian", "Metal", "Dielectric", "Emissive", "Subsurface" };
+const int material_count = 5;
+
+SceneMaterial material_from_index(int idx) {
     switch (idx) {
         case 0: return SceneMaterial::Lambertian;
         case 1: return SceneMaterial::Metal;
@@ -76,7 +91,7 @@ static SceneMaterial material_from_index(int idx) {
     }
 }
 
-static int index_from_material(SceneMaterial mat) {
+int index_from_material(SceneMaterial mat) {
     switch (mat) {
         case SceneMaterial::Lambertian:           return 0;
         case SceneMaterial::Metal:                return 1;
@@ -87,7 +102,7 @@ static int index_from_material(SceneMaterial mat) {
     }
 }
 
-static const char* kind_label(ProxyKind kind) {
+const char* kind_label(ProxyKind kind) {
     switch (kind) {
         case ProxyKind::Sphere:   return "Sphere";
         case ProxyKind::Triangle: return "Triangle";
@@ -98,12 +113,16 @@ static const char* kind_label(ProxyKind kind) {
     }
 }
 
+} // namespace
+
 // ---------------------------------------------------------------------------
 // Main draw entry point — single sidebar window
 // ---------------------------------------------------------------------------
 
 void Gui::draw(Window& app) {
-    if (!_visible) return;
+    if (!_visible) {
+        return;
+    }
 
     auto win_w = (float)app.window_width();
     auto win_h = (float)app.window_height();
@@ -179,8 +198,9 @@ void Gui::draw_mode_indicator(Window& app) {
 // ---------------------------------------------------------------------------
 
 void Gui::draw_render_params(Window& app) {
-    if (!ImGui::CollapsingHeader("Render Parameters", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!ImGui::CollapsingHeader("Render Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
         return;
+    }
 
     RenderParams& params = app.render_params();
 
@@ -216,8 +236,9 @@ void Gui::draw_render_params(Window& app) {
 // ---------------------------------------------------------------------------
 
 void Gui::draw_camera_info(Window& app) {
-    if (!ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
         return;
+    }
 
     CameraInfo& cam = app.renderer().camera_info;
     float pos[3] = { cam.origin.x, cam.origin.y, cam.origin.z };
@@ -243,8 +264,9 @@ void Gui::draw_camera_info(Window& app) {
 // ---------------------------------------------------------------------------
 
 void Gui::draw_scene_objects(Window& app) {
-    if (!ImGui::CollapsingHeader("Scene Objects", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!ImGui::CollapsingHeader("Scene Objects", ImGuiTreeNodeFlags_DefaultOpen)) {
         return;
+    }
 
     auto& objects = app.scene().mutable_objects();
     int delete_idx = -1;
@@ -265,7 +287,9 @@ void Gui::draw_scene_objects(Window& app) {
                 o.material = material_from_index(mat_idx);
                 if (o.material == SceneMaterial::Emissive) {
                     o.is_light = true;
-                    if (o.emission == glm::vec3(0.0f)) o.emission = glm::vec3(4.0f);
+                    if (o.emission == glm::vec3(0.0f)) {
+                        o.emission = glm::vec3(4.0f);
+                    }
                 } else {
                     o.is_light = false;
                 }
@@ -341,7 +365,9 @@ void Gui::draw_scene_objects(Window& app) {
             }
 
             if (o.material == SceneMaterial::Lambertian) {
-                if (ImGui::Checkbox("Checker Texture", &o.use_checker)) changed = true;
+                if (ImGui::Checkbox("Checker Texture", &o.use_checker)) {
+                    changed = true;
+                }
                 if (o.use_checker) {
                     float c1[3] = { o.checker_color1.r, o.checker_color1.g, o.checker_color1.b };
                     float c2[3] = { o.checker_color2.r, o.checker_color2.g, o.checker_color2.b };
@@ -360,7 +386,9 @@ void Gui::draw_scene_objects(Window& app) {
                 delete_idx = i;
             }
 
-            if (changed) any_changed = true;
+            if (changed) {
+                any_changed = true;
+            }
             ImGui::TreePop();
         }
 
@@ -384,8 +412,9 @@ void Gui::draw_scene_objects(Window& app) {
 // ---------------------------------------------------------------------------
 
 void Gui::draw_add_object(Window& app) {
-    if (!ImGui::CollapsingHeader("Add Object"))
+    if (!ImGui::CollapsingHeader("Add Object")) {
         return;
+    }
 
     const char* obj_types[] = { "Sphere", "Disc" };
     ImGui::Combo("Type", &_new_obj_type, obj_types, 2);
@@ -483,8 +512,9 @@ void Gui::draw_add_object(Window& app) {
 // ---------------------------------------------------------------------------
 
 void Gui::draw_file_loader(Window& app) {
-    if (!ImGui::CollapsingHeader("Load Model"))
+    if (!ImGui::CollapsingHeader("Load Model")) {
         return;
+    }
 
     ImGui::Text("OBJ:");
     ImGui::SameLine();
@@ -525,7 +555,9 @@ void Gui::draw_file_loader(Window& app) {
     ImGui::Separator();
 
     bool can_load = !_pending_obj_path.empty();
-    if (!can_load) ImGui::BeginDisabled();
+    if (!can_load) {
+        ImGui::BeginDisabled();
+    }
     if (ImGui::Button("Load Model Into Scene")) {
         int idx = app.scene().add_obj_from_file(
             _pending_obj_path, _pending_diffuse_path,
@@ -539,7 +571,9 @@ void Gui::draw_file_loader(Window& app) {
             _pending_specular_path.clear();
         }
     }
-    if (!can_load) ImGui::EndDisabled();
+    if (!can_load) {
+        ImGui::EndDisabled();
+    }
 
     if (ImGui::Button("Clear Selections")) {
         _pending_obj_path.clear();

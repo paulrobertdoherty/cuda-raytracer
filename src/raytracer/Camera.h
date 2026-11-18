@@ -60,51 +60,36 @@ struct CameraInfo { // used to pass all necessary information to the gpu to cons
 	float width;
 	float height;
 
-	__host__ CameraInfo() {}
+	__host__ CameraInfo() = default;
 
 	__host__ CameraInfo(glm::vec3 o, glm::vec3 r, float f, float w, float h) : origin(o), rotation(r), fov(f), width(w), height(h) {}
 
-	// Host-side helpers to compute forward/up from euler angles (same math
-	// as construct_camera and Input::process_camera_movement).
-	__host__ glm::vec3 forward() const {
+	// Camera basis shared by host input handling and device camera construction.
+	__host__ __device__ glm::vec3 forward() const {
 		float A = degrees_to_radians(rotation.x);
 		float B = degrees_to_radians(rotation.y);
 		float C = degrees_to_radians(rotation.z);
-		if (rotation.x == 0 && rotation.y == 0 && rotation.z == 0)
+		if (rotation.x == 0 && rotation.y == 0 && rotation.z == 0) {
 			return glm::vec3(0.0f, 0.0f, 1.0f);
-		return glm::vec3(-cosf(A)*sinf(B)*cosf(C) + sinf(A)*sinf(C),
-		                  cosf(A)*sinf(B)*sinf(C) + sinf(A)*cosf(C),
-		                  cosf(A)*cosf(B));
+		}
+		return glm::vec3((-cosf(A) * sinf(B) * cosf(C)) + (sinf(A) * sinf(C)),
+		                  (cosf(A) * sinf(B) * sinf(C)) + (sinf(A) * cosf(C)),
+		                  cosf(A) * cosf(B));
 	}
 
-	__host__ glm::vec3 up() const {
+	__host__ __device__ glm::vec3 up() const {
 		float A = degrees_to_radians(rotation.x);
 		float B = degrees_to_radians(rotation.y);
 		float C = degrees_to_radians(rotation.z);
-		if (rotation.x == 0 && rotation.y == 0 && rotation.z == 0)
+		if (rotation.x == 0 && rotation.y == 0 && rotation.z == 0) {
 			return glm::vec3(0.0f, 1.0f, 0.0f);
-		return glm::vec3( sinf(A)*sinf(B)*cosf(C) + cosf(A)*sinf(C),
-		                  -sinf(A)*sinf(B)*sinf(C) + cosf(A)*cosf(C),
-		                  -sinf(A)*cosf(B));
+		}
+		return glm::vec3((sinf(A) * sinf(B) * cosf(C)) + (cosf(A) * sinf(C)),
+		                  (-sinf(A) * sinf(B) * sinf(C)) + (cosf(A) * cosf(C)),
+		                  -sinf(A) * cosf(B));
 	}
 
 	__device__ Camera* construct_camera() {
-		float A = degrees_to_radians(rotation.x);
-		float B = degrees_to_radians(rotation.y);
-		float C = degrees_to_radians(rotation.z);
-
-		glm::vec3 forward;
-		glm::vec3 up;
-
-		if (rotation.x == 0 && rotation.y == 0 && rotation.z == 0) {
-			forward = glm::vec3(0.0f, 0.0f, 1.0f);
-			up = glm::vec3(0.0f, 1.0f, 0.0f);
-		}
-		else {
-			forward = glm::vec3(-cosf(A) * sinf(B) * cosf(C) + sinf(A) * sinf(C), cosf(A) * sinf(B) * sinf(C) + sinf(A) * cosf(C), cosf(A) * cosf(B));
-			up = glm::vec3(sinf(A) * sinf(B) * cosf(C) + cosf(A) * sinf(C), -sinf(A) * sinf(B) * sinf(C) + cosf(A) * cosf(C), -sinf(A) * cosf(B));
-		}
-
-		return new Camera(origin, forward, up, fov, width / height);
+		return new Camera(origin, forward(), up(), fov, width / height);
 	}
 };

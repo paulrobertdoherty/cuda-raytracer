@@ -2,7 +2,7 @@
 # Run clang-tidy over host C++ sources using compile_commands.json from build/.
 #
 # Usage:
-#   scripts/clang-tidy.sh                      # check all host .cpp/.h under src/
+#   scripts/clang-tidy.sh                      # check the configured host sources and their headers
 #   scripts/clang-tidy.sh src/Window.cpp       # check a single file
 #   scripts/clang-tidy.sh --fix                # apply auto-fixes where available
 #
@@ -33,9 +33,21 @@ if [[ $# -gt 0 && "$1" != --* ]]; then
   files=("$@")
   extra_args=()
 else
-  mapfile -d '' files < <(find "$repo_root/src" \
-    -path "$repo_root/src/raytracer" -prune -o \
-    \( -name '*.cpp' -o -name '*.h' \) -print0)
+  # Use the configured translation units so mutually exclusive backends
+  # are checked with their own include paths.
+  mapfile -t files < <(python3 - "$build_dir/compile_commands.json" "$repo_root/src" <<'PYTHON'
+import json
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[2])
+entries = json.loads(Path(sys.argv[1]).read_text())
+paths = {Path(entry["directory"]) / entry["file"] for entry in entries}
+for path in sorted(paths):
+    if root in path.parents and path.suffix == ".cpp":
+        print(path)
+PYTHON
+  )
   extra_args=("$@")
 fi
 

@@ -1,11 +1,6 @@
 #include "Scene.h"
 
 #include "Mesh.h"
-#ifdef HEADLESS_BUILD
-#include "HeadlessTexture.h"
-#else
-#include "GLTexture.h"
-#endif
 #include "ObjLoader.h"
 
 #include <iostream>
@@ -90,7 +85,9 @@ int Scene::add_sphere(const glm::vec3& center, float radius,
 }
 
 void Scene::remove_object(int index) {
-	if (index < 0 || index >= (int)_objects.size()) return;
+	if (index < 0 || index >= (int)_objects.size()) {
+		return;
+	}
 	_objects.erase(_objects.begin() + index);
 }
 
@@ -225,13 +222,19 @@ bool hit_sphere(const glm::vec3& ray_o, const glm::vec3& ray_d,
 	glm::vec3 oc = ray_o - center;
 	float a = glm::dot(ray_d, ray_d);
 	float b = glm::dot(oc, ray_d);
-	float c = glm::dot(oc, oc) - radius * radius;
-	float disc = b * b - a * c;
-	if (disc < 0.0f) return false;
+	float c = glm::dot(oc, oc) - (radius * radius);
+	float disc = (b * b) - (a * c);
+	if (disc < 0.0f) {
+		return false;
+	}
 	float sqd = std::sqrt(disc);
 	float t = (-b - sqd) / a;
-	if (t < 1e-3f) t = (-b + sqd) / a;
-	if (t < 1e-3f) return false;
+	if (t < 1e-3f) {
+		t = (-b + sqd) / a;
+	}
+	if (t < 1e-3f) {
+		return false;
+	}
 	out_t = t;
 	return true;
 }
@@ -243,16 +246,24 @@ bool hit_triangle(const glm::vec3& ray_o, const glm::vec3& ray_d,
 	glm::vec3 edge2 = v2 - v0;
 	glm::vec3 h = glm::cross(ray_d, edge2);
 	float a = glm::dot(edge1, h);
-	if (std::fabs(a) < 1e-8f) return false;
+	if (std::fabs(a) < 1e-8f) {
+		return false;
+	}
 	float f = 1.0f / a;
 	glm::vec3 s = ray_o - v0;
 	float u = f * glm::dot(s, h);
-	if (u < 0.0f || u > 1.0f) return false;
+	if (u < 0.0f || u > 1.0f) {
+		return false;
+	}
 	glm::vec3 q = glm::cross(s, edge1);
 	float v = f * glm::dot(ray_d, q);
-	if (v < 0.0f || u + v > 1.0f) return false;
+	if (v < 0.0f || u + v > 1.0f) {
+		return false;
+	}
 	float t = f * glm::dot(edge2, q);
-	if (t < 1e-3f) return false;
+	if (t < 1e-3f) {
+		return false;
+	}
 	out_t = t;
 	return true;
 }
@@ -261,13 +272,19 @@ bool hit_disc(const glm::vec3& ray_o, const glm::vec3& ray_d,
               const glm::vec3& center, const glm::vec3& normal,
               float radius, float& out_t) {
 	float denom = glm::dot(normal, ray_d);
-	if (std::fabs(denom) < 1e-8f) return false;
+	if (std::fabs(denom) < 1e-8f) {
+		return false;
+	}
 	float D = glm::dot(normal, center);
 	float t = (D - glm::dot(normal, ray_o)) / denom;
-	if (t < 1e-3f) return false;
+	if (t < 1e-3f) {
+		return false;
+	}
 	glm::vec3 p = ray_o + t * ray_d;
 	glm::vec3 d = p - center;
-	if (glm::dot(d, d) > radius * radius) return false;
+	if (glm::dot(d, d) > radius * radius) {
+		return false;
+	}
 	out_t = t;
 	return true;
 }
@@ -281,10 +298,14 @@ bool hit_aabb(const glm::vec3& ray_o, const glm::vec3& ray_d,
 		float inv_d = 1.0f / ray_d[i];
 		float t0 = (mn[i] - ray_o[i]) * inv_d;
 		float t1 = (mx[i] - ray_o[i]) * inv_d;
-		if (inv_d < 0.0f) std::swap(t0, t1);
+		if (inv_d < 0.0f) {
+			std::swap(t0, t1);
+		}
 		tmin = t0 > tmin ? t0 : tmin;
 		tmax = t1 < tmax ? t1 : tmax;
-		if (tmax <= tmin) return false;
+		if (tmax <= tmin) {
+			return false;
+		}
 	}
 	out_t = tmin;
 	return true;
@@ -324,7 +345,8 @@ bool Scene::ray_intersect(const glm::vec3& ray_origin,
 				glm::vec3 b = o.position + o.scale * (o.Q + o.u);
 				glm::vec3 c = o.position + o.scale * (o.Q + o.u + o.v);
 				glm::vec3 d = o.position + o.scale * (o.Q + o.v);
-				float t1, t2;
+				float t1;
+				float t2;
 				bool h1 = hit_triangle(ray_origin, ray_dir, a, b, c, t1);
 				bool h2 = hit_triangle(ray_origin, ray_dir, a, c, d, t2);
 				if (h1 && h2) { t = std::min(t1, t2); hit = true; }
@@ -340,7 +362,9 @@ bool Scene::ray_intersect(const glm::vec3& ray_origin,
 				break;
 			}
 			case ProxyKind::Mesh: {
-				if (o.mesh_index < 0 || o.mesh_index >= (int)_meshes.size()) break;
+				if (o.mesh_index < 0 || o.mesh_index >= (int)_meshes.size()) {
+					break;
+				}
 				const Mesh* m = _meshes[o.mesh_index].get();
 				glm::vec3 mn = o.position + o.scale * m->local_min;
 				glm::vec3 mx = o.position + o.scale * m->local_max;
@@ -355,7 +379,9 @@ bool Scene::ray_intersect(const glm::vec3& ray_origin,
 		}
 	}
 
-	if (best_idx < 0) return false;
+	if (best_idx < 0) {
+		return false;
+	}
 	out_t = best_t;
 	out_idx = best_idx;
 	out_point = ray_origin + best_t * ray_dir;

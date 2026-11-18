@@ -6,7 +6,9 @@
 
 // ---- helpers ----------------------------------------------------------------
 
-static constexpr int NUM_BINS = 16;
+namespace {
+
+constexpr int NUM_BINS = 16;
 
 struct TriAABB {
     glm::vec3 bmin;
@@ -14,12 +16,12 @@ struct TriAABB {
     glm::vec3 centroid;
 };
 
-static TriAABB compute_tri_aabb(const glm::vec3* positions,
+TriAABB compute_tri_aabb(const glm::vec3* positions,
                                 const unsigned int* indices,
                                 int tri_id) {
-    glm::vec3 v0 = positions[indices[3 * tri_id + 0]];
-    glm::vec3 v1 = positions[indices[3 * tri_id + 1]];
-    glm::vec3 v2 = positions[indices[3 * tri_id + 2]];
+    glm::vec3 v0 = positions[indices[(3 * tri_id) + 0]];
+    glm::vec3 v1 = positions[indices[(3 * tri_id) + 1]];
+    glm::vec3 v2 = positions[indices[(3 * tri_id) + 2]];
 
     TriAABB t;
     t.bmin = glm::min(glm::min(v0, v1), v2);
@@ -28,7 +30,7 @@ static TriAABB compute_tri_aabb(const glm::vec3* positions,
     return t;
 }
 
-static float surface_area(const glm::vec3& bmin, const glm::vec3& bmax) {
+float surface_area(const glm::vec3& bmin, const glm::vec3& bmax) {
     glm::vec3 d = bmax - bmin;
     return 2.0f * (d.x * d.y + d.y * d.z + d.z * d.x);
 }
@@ -41,7 +43,7 @@ struct SplitResult {
     bool found;
 };
 
-static SplitResult sah_binned_split(
+SplitResult sah_binned_split(
     const std::vector<TriAABB>& tri_info,
     const int* tri_ids,
     int start, int count,
@@ -51,13 +53,17 @@ static SplitResult sah_binned_split(
     float best_cost = std::numeric_limits<float>::max();
 
     float parent_sa = surface_area(parent_min, parent_max);
-    if (parent_sa <= 0.0f) return best;
+    if (parent_sa <= 0.0f) {
+        return best;
+    }
 
     for (int axis = 0; axis < 3; axis++) {
         float axis_min = parent_min[axis];
         float axis_max = parent_max[axis];
         float extent = axis_max - axis_min;
-        if (extent < 1e-6f) continue;
+        if (extent < 1e-6f) {
+            continue;
+        }
 
         float bin_width = extent / NUM_BINS;
 
@@ -83,8 +89,8 @@ static SplitResult sah_binned_split(
         glm::vec3 left_max[NUM_BINS - 1];
         int left_count[NUM_BINS - 1];
         {
-            glm::vec3 cmin = glm::vec3(std::numeric_limits<float>::max());
-            glm::vec3 cmax = glm::vec3(std::numeric_limits<float>::lowest());
+            auto cmin = glm::vec3(std::numeric_limits<float>::max());
+            auto cmax = glm::vec3(std::numeric_limits<float>::lowest());
             int ccount = 0;
             for (int i = 0; i < NUM_BINS - 1; i++) {
                 cmin = glm::min(cmin, bins[i].bmin);
@@ -101,8 +107,8 @@ static SplitResult sah_binned_split(
         glm::vec3 right_max[NUM_BINS - 1];
         int right_count[NUM_BINS - 1];
         {
-            glm::vec3 cmin = glm::vec3(std::numeric_limits<float>::max());
-            glm::vec3 cmax = glm::vec3(std::numeric_limits<float>::lowest());
+            auto cmin = glm::vec3(std::numeric_limits<float>::max());
+            auto cmax = glm::vec3(std::numeric_limits<float>::lowest());
             int ccount = 0;
             for (int i = NUM_BINS - 1; i >= 1; i--) {
                 cmin = glm::min(cmin, bins[i].bmin);
@@ -116,7 +122,9 @@ static SplitResult sah_binned_split(
 
         // Evaluate each split plane.
         for (int i = 0; i < NUM_BINS - 1; i++) {
-            if (left_count[i] == 0 || right_count[i] == 0) continue;
+            if (left_count[i] == 0 || right_count[i] == 0) {
+                continue;
+            }
             float lsa = surface_area(left_min[i], left_max[i]);
             float rsa = surface_area(right_min[i], right_max[i]);
             float cost = (static_cast<float>(left_count[i]) * lsa + static_cast<float>(right_count[i]) * rsa) / parent_sa;
@@ -134,7 +142,7 @@ static SplitResult sah_binned_split(
 
 // ---- recursive build --------------------------------------------------------
 
-static int build_recursive(
+int build_recursive(
     std::vector<MeshBVHNode>& nodes,
     int* tri_ids,
     int start, int count,
@@ -203,6 +211,8 @@ static int build_recursive(
     nodes[node_idx].tri_count = 0; // internal node
     return node_idx;
 }
+
+} // namespace
 
 // ---- public API -------------------------------------------------------------
 

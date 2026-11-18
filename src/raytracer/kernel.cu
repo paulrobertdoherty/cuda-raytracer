@@ -8,9 +8,6 @@
 #include <glm/glm.hpp>
 #include <curand_kernel.h>
 
-#ifndef HEADLESS_BUILD
-#include "Window.h"
-#endif
 #include "cuda_errors.h"
 #include "FrameBuffer.h"
 #include "Ray.h"
@@ -29,25 +26,23 @@
 #include "raytracer/kernel.h"
 #include "Scene.h"
 #include "Mesh.h"
-#ifdef HEADLESS_BUILD
-#include "HeadlessTexture.h"
-#else
-#include "GLTexture.h"
-#endif
 #include "MeshBVHBuilder.h"
 
 #include <vector>
 
-__global__ void raytrace(FrameBuffer fb, thrust::device_ptr<World*> world, thrust::device_ptr<Camera*> d_camera, thrust::device_ptr<RandState> rand_state, int samples, int tile_offset_x, int tile_offset_y) {
+__global__ void raytrace(uint32_t* __restrict__ pixels, int width, int height, int max_depth,
+                         thrust::device_ptr<World*> world, thrust::device_ptr<Camera*> d_camera,
+                         thrust::device_ptr<RandState> rand_state, int samples,
+                         int tile_offset_x, int tile_offset_y) {
 
 	// X AND Y coordinates with tile offset
 	int i = threadIdx.x + blockIdx.x * blockDim.x + tile_offset_x;
 	int j = threadIdx.y + blockIdx.y * blockDim.y + tile_offset_y;
 
 	// return early if we're outside of the frame buffer
-	if ((i >= fb.width) || (j >= fb.height)) return;
+	if ((i >= width) || (j >= height)) return;
 
-	int pixel_idx = j * fb.width + i;
+	int pixel_idx = j * width + i;
 
 	RandState local_rand_state = rand_state[pixel_idx];
 
@@ -55,10 +50,10 @@ __global__ void raytrace(FrameBuffer fb, thrust::device_ptr<World*> world, thrus
 
 	for (int s = 0; s < samples; s++) {
 		// normalized screen coordinates
-		float u = float(i + curand_uniform(&local_rand_state)) / float(fb.width);
-		float v = float(j + curand_uniform(&local_rand_state)) / float(fb.height);
+		float u = float(i + curand_uniform(&local_rand_state)) / float(width);
+		float v = float(j + curand_uniform(&local_rand_state)) / float(height);
 		Ray r = ((Camera*)(*d_camera))->get_ray(u, v);
-		col += fb.color(r, *world, &local_rand_state);
+		col += trace_color(r, *world, &local_rand_state, max_depth);
 	}
 	rand_state[pixel_idx] = local_rand_state;
 	col /= float(samples);
@@ -66,10 +61,12 @@ __global__ void raytrace(FrameBuffer fb, thrust::device_ptr<World*> world, thrus
 	col[1] = sqrtf(col[1]);
 	col[2] = sqrtf(col[2]);
 
-	fb.writePixel(i, j, glm::vec4(col, 1.0f));
+	write_pixel(pixels, pixel_idx, glm::vec4(col, 1.0f));
 }
 
-__global__ void raytrace_pixelated(FrameBuffer fb, thrust::device_ptr<World*> world, thrust::device_ptr<Camera*> d_camera, thrust::device_ptr<RandState> rand_state, int pixelate) {
+__global__ void raytrace_pixelated(uint32_t* __restrict__ pixels, int width, int height, int max_depth,
+                                   thrust::device_ptr<World*> world, thrust::device_ptr<Camera*> d_camera,
+                                   thrust::device_ptr<RandState> rand_state, int pixelate) {
 
 	int ci = threadIdx.x + blockIdx.x * blockDim.x;
 	int cj = threadIdx.y + blockIdx.y * blockDim.y;
@@ -77,16 +74,16 @@ __global__ void raytrace_pixelated(FrameBuffer fb, thrust::device_ptr<World*> wo
 	int x0 = ci * pixelate;
 	int y0 = cj * pixelate;
 
-	if (x0 >= fb.width || y0 >= fb.height) return;
+	if (x0 >= width || y0 >= height) return;
 
 	// Reuse the rand state slot at the block's top-left pixel.
-	int rand_idx = y0 * fb.width + x0;
+	int rand_idx = y0 * width + x0;
 	RandState local_rand_state = rand_state[rand_idx];
 
-	float u = (float(x0) + 0.5f * float(pixelate)) / float(fb.width);
-	float v = (float(y0) + 0.5f * float(pixelate)) / float(fb.height);
+	float u = (float(x0) + 0.5f * float(pixelate)) / float(width);
+	float v = (float(y0) + 0.5f * float(pixelate)) / float(height);
 	Ray r = ((Camera*)(*d_camera))->get_ray(u, v);
-	glm::vec3 col = fb.color(r, *world, &local_rand_state);
+	glm::vec3 col = trace_color(r, *world, &local_rand_state, max_depth);
 	rand_state[rand_idx] = local_rand_state;
 
 	col[0] = sqrtf(col[0]);
@@ -96,11 +93,11 @@ __global__ void raytrace_pixelated(FrameBuffer fb, thrust::device_ptr<World*> wo
 
 	int x_end = x0 + pixelate;
 	int y_end = y0 + pixelate;
-	if (x_end > fb.width) x_end = fb.width;
-	if (y_end > fb.height) y_end = fb.height;
+	if (x_end > width) x_end = width;
+	if (y_end > height) y_end = height;
 	for (int py = y0; py < y_end; py++) {
 		for (int px = x0; px < x_end; px++) {
-			fb.writePixel(px, py, out);
+			write_pixel(pixels, py * width + px, out);
 		}
 	}
 }
@@ -235,7 +232,7 @@ __global__ void render_init(int width, int height, thrust::device_ptr<RandState>
 }
 
 
-KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int samples, int max_depth, float fov, int seed) {
+KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int samples, int max_depth, float fov, int seed) : KernelInfo() {
 	this->resources = resources;
 	this->nx = nx;
 	this->ny = ny;
@@ -244,8 +241,6 @@ KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int sam
 	this->seed = seed;
 	this->headless = false;
 	this->d_headless_buffer = nullptr;
-
-	this->frame_buffer = new FrameBuffer(nx, ny, max_depth);
 
 	camera_info = CameraInfo(glm::vec3(0.0f, 1.0f, 4.0f), glm::vec3(0.0f, 0.0f, 0.0f), fov, (float) nx, (float) ny);
 
@@ -282,7 +277,7 @@ KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int sam
 	// default stream see the initialized rand state.
 }
 
-KernelInfo::KernelInfo(int nx, int ny, int samples, int max_depth, float fov, int seed) {
+KernelInfo::KernelInfo(int nx, int ny, int samples, int max_depth, float fov, int seed) : KernelInfo() {
 	this->resources = {};
 	this->nx = nx;
 	this->ny = ny;
@@ -291,8 +286,6 @@ KernelInfo::KernelInfo(int nx, int ny, int samples, int max_depth, float fov, in
 	this->seed = seed;
 	this->headless = true;
 	this->d_headless_buffer = nullptr;
-
-	this->frame_buffer = new FrameBuffer(nx, ny, max_depth);
 
 	camera_info = CameraInfo(glm::vec3(0.0f, 1.0f, 4.0f), glm::vec3(0.0f, 0.0f, 0.0f), fov, (float) nx, (float) ny);
 
@@ -311,7 +304,6 @@ KernelInfo::KernelInfo(int nx, int ny, int samples, int max_depth, float fov, in
 	// Allocate device-side pixel buffer (no OpenGL PBO in headless mode)
 	size_t buffer_bytes = (size_t)nx * ny * sizeof(uint32_t);
 	check_cuda_errors(cudaMalloc(&d_headless_buffer, buffer_bytes));
-	frame_buffer->device_ptr = d_headless_buffer;
 
 	create_world<<<1, 1>>> (d_world, d_camera, camera_info);
 	check_cuda_errors(cudaGetLastError());
@@ -328,9 +320,6 @@ KernelInfo::KernelInfo(int nx, int ny, int samples, int max_depth, float fov, in
 }
 
 void KernelInfo::render_to_buffer(std::vector<uint8_t>& output_rgba) {
-	// Point frame_buffer at headless device buffer
-	frame_buffer->device_ptr = d_headless_buffer;
-
 	// 32x8 keeps each warp on a single row of pixels: framebuffer writes hit
 	// one cache line per warp (vs two for 16x16) and the per-lane Philox
 	// state load is row-aligned.
@@ -339,7 +328,8 @@ void KernelInfo::render_to_buffer(std::vector<uint8_t>& output_rgba) {
 	dim3 blocks((nx + tx - 1) / tx, (ny + ty - 1) / ty);
 	dim3 threads(tx, ty);
 
-	raytrace<<<blocks, threads>>> (*frame_buffer, d_world, d_camera, d_rand_state, samples, 0, 0);
+	raytrace<<<blocks, threads>>>(d_headless_buffer, nx, ny, max_depth, d_world, d_camera,
+	                              d_rand_state, samples, 0, 0);
 	check_cuda_errors(cudaGetLastError());
 	check_cuda_errors(cudaDeviceSynchronize());
 
@@ -369,34 +359,39 @@ void KernelInfo::render_to_buffer(std::vector<uint8_t>& output_rgba) {
 	}
 }
 
-void KernelInfo::resize(int nx, int ny) {
-	this->nx = nx;
-	this->ny = ny;
+void KernelInfo::resize(int width, int height) {
+	const int new_count = width * height;
+	if (new_count > d_rand_state_capacity) {
+		auto new_state = thrust::device_new<RandState>(new_count);
+		uint32_t* new_pixels = nullptr;
+		try {
+			if (headless) {
+				check_cuda_errors(cudaMalloc(&new_pixels, sizeof(uint32_t) * new_count));
+			}
+			const dim3 threads(8, 8);
+			const dim3 blocks((width + 7) / 8, (height + 7) / 8);
+			render_init<<<blocks, threads>>>(width, height, new_state, seed);
+			check_cuda_errors(cudaGetLastError());
+		} catch (...) {
+			if (new_pixels) {
+				cudaFree(new_pixels);
+			}
+			thrust::device_free(new_state);
+			throw;
+		}
 
-	delete frame_buffer;
-	this->frame_buffer = new FrameBuffer(nx, ny, max_depth);
-
-	int new_count = nx * ny;
-	if (new_count <= d_rand_state_capacity) {
-		// Shrink-or-equal: keep the existing rand-state buffer. Pixels reuse
-		// whatever Philox state lives at j*new_width+i; for stochastic path
-		// tracing this only changes the realized noise pattern, not bias.
-		// Skips ~tens of millions of curand_init calls per drag-resize.
-		return;
+		thrust::device_free(d_rand_state);
+		d_rand_state = new_state;
+		if (headless) {
+			cudaFree(d_headless_buffer);
+			d_headless_buffer = new_pixels;
+		}
+		d_rand_state_capacity = new_count;
 	}
 
-	thrust::device_free(d_rand_state);
-	d_rand_state = thrust::device_new<RandState>(new_count);
-	d_rand_state_capacity = new_count;
-
-	int tx = 8;
-	int ty = 8;
-	dim3 blocks((nx + tx - 1) / tx, (ny + ty - 1) / ty);
-	dim3 threads(tx, ty);
-	render_init << <blocks, threads >> > (nx, ny, d_rand_state, seed);
-	check_cuda_errors(cudaGetLastError());
-	// No sync needed: stream ordering guarantees subsequent kernels on the
-	// default stream see the initialized rand state.
+	// Smaller images reuse the random states at the new linear pixel indices.
+	nx = width;
+	ny = height;
 }
 
 __global__ void set_device_camera(thrust::device_ptr<Camera*> d_camera, glm::vec3 position, glm::vec3 forward, glm::vec3 up, float aspect_ratio) {
@@ -415,8 +410,7 @@ void KernelInfo::set_camera(glm::vec3 position, glm::vec3 forward, glm::vec3 up)
 
 void KernelInfo::render(bool camera_moving, int pixelate) {
 
-	check_cuda_errors(cudaGraphicsMapResources(1, &resources));
-	check_cuda_errors(cudaGraphicsResourceGetMappedPointer((void**)&(frame_buffer->device_ptr), &(frame_buffer->buffer_size), resources));
+	map_pbo();
 
 	// 32x8: warp covers one row of pixels — coalesces framebuffer writes and
 	// row-aligns the per-lane Philox state loads.
@@ -429,31 +423,39 @@ void KernelInfo::render(bool camera_moving, int pixelate) {
 		dim3 blocks((eff_nx + tx - 1) / tx, (eff_ny + ty - 1) / ty);
 		dim3 threads(tx, ty);
 
-		raytrace_pixelated<<<blocks, threads>>> (*frame_buffer, d_world, d_camera, d_rand_state, pixelate);
+		raytrace_pixelated<<<blocks, threads>>>(d_mapped_pixels, nx, ny, max_depth, d_world,
+		                                        d_camera, d_rand_state, pixelate);
 	} else {
 		dim3 blocks((nx + tx - 1) / tx, (ny + ty - 1) / ty);
 		dim3 threads(tx, ty);
 
 		int spp = camera_moving ? 1 : samples;
 
-		// frame buffer is implicitly copied to the device each frame
-		raytrace<<<blocks, threads>>> (*frame_buffer, d_world, d_camera, d_rand_state, spp, 0, 0);
+		raytrace<<<blocks, threads>>>(d_mapped_pixels, nx, ny, max_depth, d_world, d_camera,
+		                              d_rand_state, spp, 0, 0);
 	}
 
 	check_cuda_errors(cudaGetLastError());
 	// wait for the gpu to finish
 	check_cuda_errors(cudaDeviceSynchronize());
 
-	check_cuda_errors(cudaGraphicsUnmapResources(1, &resources));
+	unmap_pbo();
 }
 
 void KernelInfo::map_pbo() {
 	check_cuda_errors(cudaGraphicsMapResources(1, &resources));
-	check_cuda_errors(cudaGraphicsResourceGetMappedPointer((void**)&(frame_buffer->device_ptr), &(frame_buffer->buffer_size), resources));
+	size_t mapped_size;
+	const cudaError_t result = cudaGraphicsResourceGetMappedPointer(
+		reinterpret_cast<void**>(&d_mapped_pixels), &mapped_size, resources);
+	if (result != cudaSuccess) {
+		cudaGraphicsUnmapResources(1, &resources);
+		check_cuda_errors(result);
+	}
 }
 
 void KernelInfo::unmap_pbo() {
 	check_cuda_errors(cudaGraphicsUnmapResources(1, &resources));
+	d_mapped_pixels = nullptr;
 }
 
 void KernelInfo::render_tile(int tile_offset_x, int tile_offset_y, int tile_w, int tile_h, int spp) {
@@ -464,7 +466,8 @@ void KernelInfo::render_tile(int tile_offset_x, int tile_offset_y, int tile_w, i
 	dim3 blocks((tile_w + tx - 1) / tx, (tile_h + ty - 1) / ty);
 	dim3 threads(tx, ty);
 
-	raytrace<<<blocks, threads>>> (*frame_buffer, d_world, d_camera, d_rand_state, spp, tile_offset_x, tile_offset_y);
+	raytrace<<<blocks, threads>>>(d_mapped_pixels, nx, ny, max_depth, d_world, d_camera,
+	                              d_rand_state, spp, tile_offset_x, tile_offset_y);
 	check_cuda_errors(cudaGetLastError());
 	check_cuda_errors(cudaDeviceSynchronize());
 }
@@ -475,14 +478,31 @@ __global__ void free_scene(thrust::device_ptr<World*> d_world, thrust::device_pt
 }
 
 KernelInfo::~KernelInfo() {
-	check_cuda_errors(cudaDeviceSynchronize());
+	if (d_mapped_pixels) {
+		cudaGraphicsUnmapResources(1, &resources);
+	}
 
-	free_scene<<<1, 1>>> (d_world, d_camera);
-	check_cuda_errors(cudaDeviceSynchronize());
+	// device_new value-initializes both pointer slots. Even if construction
+	// failed before create_world ran, deleting their null contents is safe.
+	if (d_world && d_camera) {
+		free_scene<<<1, 1>>> (d_world, d_camera);
+		const cudaError_t result = cudaDeviceSynchronize();
+		if (result != cudaSuccess) {
+			std::cerr << "CUDA scene cleanup failed: " << cudaGetErrorString(result) << '\n';
+		}
+	}
 
-	thrust::device_free(d_world);
-	thrust::device_free(d_camera);
-	thrust::device_free(d_rand_state);
+	for (thrust::device_ptr<void> ptr : {thrust::device_ptr<void>(d_world),
+	                                    thrust::device_ptr<void>(d_camera),
+	                                    thrust::device_ptr<void>(d_rand_state)}) {
+		if (ptr) {
+			try {
+				thrust::device_free(ptr);
+			} catch (const std::exception& error) {
+				std::cerr << "CUDA allocation cleanup failed: " << error.what() << '\n';
+			}
+		}
+	}
 
 	if (d_headless_buffer) {
 		cudaFree(d_headless_buffer);
@@ -539,8 +559,6 @@ KernelInfo::~KernelInfo() {
 	d_texture_widths.clear();
 	d_texture_heights.clear();
 	d_texture_channels.clear();
-
-	delete frame_buffer;
 }
 
 void KernelInfo::rebuild_world(const Scene& scene) {

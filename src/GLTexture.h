@@ -1,8 +1,5 @@
 #pragma once
 
-#include <glad/gl.h>
-
-#include <memory>
 #include <string>
 
 // Minimal 2D GL texture loaded from an image file via stb_image. RAII; the
@@ -21,7 +18,7 @@ public:
 	// Bind to the given texture unit (e.g. 0 for GL_TEXTURE0).
 	void bind(unsigned int unit) const;
 
-	GLuint id() const { return _id; }
+	unsigned int id() const { return _id; }
 	int width()  const { return _width; }
 	int height() const { return _height; }
 	int channels() const { return _channels; }
@@ -31,7 +28,7 @@ public:
 	const unsigned char* raw_pixels() const { return _pixels; }
 
 private:
-	GLuint         _id       = 0;
+	unsigned int         _id       = 0;
 	int            _width    = 0;
 	int            _height   = 0;
 	int            _channels = 0;

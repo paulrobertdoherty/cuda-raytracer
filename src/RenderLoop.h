@@ -15,7 +15,8 @@
 
 class RenderLoop {
 public:
-	RenderLoop();
+	RenderLoop() = default;
+	~RenderLoop();
 
 	RenderLoop(const RenderLoop&) = delete;
 	RenderLoop& operator=(const RenderLoop&) = delete;
@@ -24,8 +25,6 @@ public:
 	                      ShaderManager& shaders,
 	                      const Scene& scene,
 	                      const RenderParams& params);
-
-	void destroy();
 
 	void resize(int width, int height);
 	void set_viewport(int x, int render_w, int render_h);
@@ -65,7 +64,7 @@ private:
 	GLuint _raster_depth_rb = 0;
 	std::unique_ptr<Rasterizer> _rasterizer;
 
-	void copyFrameBufferTexture(int width, int height,
+	static void copyFrameBufferTexture(int width, int height,
 	                            int fboIn, int textureIn,
 	                            int fboOut, int textureOut);
 };

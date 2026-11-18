@@ -8,7 +8,7 @@
 #include "SceneController.h"
 #include "Rasterizer.h"
 
-InputHandler::InputHandler() {}
+InputHandler::InputHandler() = default;
 
 void InputHandler::on_mouse_button(int button, int action, int mods) {
 	_input.on_mouse_button(button, action, mods);
@@ -34,7 +34,8 @@ void InputHandler::tick(GLFWwindow* window,
 			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 		} else {
 			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-			double xpos, ypos;
+			double xpos;
+			double ypos;
 			glfwGetCursorPos(window, &xpos, &ypos);
 			_input.last_xpos = xpos;
 			_input.last_ypos = ypos;
@@ -76,7 +77,8 @@ void InputHandler::tick(GLFWwindow* window,
 		} else {
 			if (!gui.visible()) {
 				glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-				double xpos, ypos;
+				double xpos;
+				double ypos;
 				glfwGetCursorPos(window, &xpos, &ypos);
 				_input.last_xpos = xpos;
 				_input.last_ypos = ypos;
@@ -89,7 +91,8 @@ void InputHandler::tick(GLFWwindow* window,
 	if (render_mode == RenderMode::PREVIEW) {
 		if (_input.edit_mode) {
 			if (!imgui_mouse) {
-				int w = 0, h = 0;
+				int w = 0;
+				int h = 0;
 				glfwGetWindowSize(window, &w, &h);
 				_input.process_edit_mouse(window,
 					scene_controller.scene(),
@@ -103,12 +106,16 @@ void InputHandler::tick(GLFWwindow* window,
 				_input.scene_dirty = false;
 				frame_count = 1;
 			}
-			if (_input.lmb_down) frame_count = 1;
+			if (_input.lmb_down) {
+				frame_count = 1;
+			}
 			camera_moving = false;
 		} else if (!imgui_kb) {
 			_input.process_camera_movement(window, renderer, t_diff);
 			camera_moving = _input.has_camera_moved();
-			if (camera_moving) frame_count = 1;
+			if (camera_moving) {
+				frame_count = 1;
+			}
 		} else {
 			camera_moving = false;
 		}

@@ -34,13 +34,11 @@ struct VertexKeyHash {
 	}
 };
 
-} // namespace
-
 // Resolves a user-supplied OBJ path. If `path` is a directory, look for a
 // single `.obj` file inside it (the common case is a model dir like
 // `my_model/` containing `my_model.obj` + textures + .mtl). Returns an empty
 // string and writes a diagnostic to stderr on ambiguous/missing cases.
-static std::string resolve_obj_path(const std::string& path) {
+std::string resolve_obj_path(const std::string& path) {
 	std::error_code ec;
 	if (!std::filesystem::is_directory(path, ec)) {
 		return path;
@@ -48,7 +46,9 @@ static std::string resolve_obj_path(const std::string& path) {
 
 	std::vector<std::filesystem::path> candidates;
 	for (const auto& entry : std::filesystem::directory_iterator(path, ec)) {
-		if (!entry.is_regular_file(ec)) continue;
+		if (!entry.is_regular_file(ec)) {
+			continue;
+		}
 		std::string ext = entry.path().extension().string();
 		std::transform(ext.begin(), ext.end(), ext.begin(),
 		               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -64,10 +64,14 @@ static std::string resolve_obj_path(const std::string& path) {
 		std::cerr << "[ObjLoader] '" << path << "' is a directory but contains no .obj file" << "\n";
 	} else {
 		std::cerr << "[ObjLoader] '" << path << "' contains multiple .obj files; pass one explicitly:" << "\n";
-		for (const auto& c : candidates) std::cerr << "  " << c.string() << "\n";
+		for (const auto& c : candidates) {
+			std::cerr << "  " << c.string() << "\n";
+		}
 	}
 	return {};
 }
+
+} // namespace
 
 std::unique_ptr<Mesh> load(const std::string& path) {
 	std::string resolved = resolve_obj_path(path);
@@ -132,9 +136,9 @@ std::unique_ptr<Mesh> load(const std::string& path) {
 			for (int v = 0; v < 3; v++) {
 				auto idx = mesh_data.indices[index_offset + v];
 				face_pos[v] = glm::vec3(
-					attrib.vertices[3 * idx.vertex_index + 0],
-					attrib.vertices[3 * idx.vertex_index + 1],
-					attrib.vertices[3 * idx.vertex_index + 2]);
+					attrib.vertices[(3 * idx.vertex_index) + 0],
+					attrib.vertices[(3 * idx.vertex_index) + 1],
+					attrib.vertices[(3 * idx.vertex_index) + 2]);
 			}
 			glm::vec3 face_cross = glm::cross(face_pos[1] - face_pos[0],
 			                                  face_pos[2] - face_pos[0]);
@@ -159,17 +163,17 @@ std::unique_ptr<Mesh> load(const std::string& path) {
 
 				if (idx.normal_index >= 0) {
 					out.normal = glm::vec3(
-						attrib.normals[3 * idx.normal_index + 0],
-						attrib.normals[3 * idx.normal_index + 1],
-						attrib.normals[3 * idx.normal_index + 2]);
+						attrib.normals[(3 * idx.normal_index) + 0],
+						attrib.normals[(3 * idx.normal_index) + 1],
+						attrib.normals[(3 * idx.normal_index) + 2]);
 				} else {
 					out.normal = flat_normal;
 				}
 
 				if (idx.texcoord_index >= 0) {
 					out.uv = glm::vec2(
-						attrib.texcoords[2 * idx.texcoord_index + 0],
-						attrib.texcoords[2 * idx.texcoord_index + 1]);
+						attrib.texcoords[(2 * idx.texcoord_index) + 0],
+						attrib.texcoords[(2 * idx.texcoord_index) + 1]);
 				} else {
 					out.uv = glm::vec2(0.0f);
 				}

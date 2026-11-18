@@ -4,32 +4,6 @@
 #include <cstdint>
 #include <glm/vec4.hpp>
 #include <glm/packing.hpp>
-#include "device_launch_parameters.h"
-#include "Hittable.h"
-#include <curand_kernel.h>
-
-
-#include "cuda_errors.h"
-
-class World;
-
-class FrameBuffer {
-public:
-	uint32_t* device_ptr; // RGBA8 internal format, but uses BGRA
-	size_t buffer_size;
-	unsigned int width;
-	unsigned int height;
-	int max_depth;
-
-
-	__host__ FrameBuffer(unsigned int width, unsigned int height, int max_depth);
-
-	__device__ void writePixel(int x, int y, glm::vec4 pixel);
-
-	__device__ glm::vec3 color(const Ray& r, World* world, RandState* local_rand_state);
-};
-
-#ifdef __CUDACC__
 #include "Material.h"
 #include "World.h"
 #include "HittableDispatch.h"
@@ -39,12 +13,9 @@ public:
 #define M_PI 3.14159265358979323846264338327950288f
 #endif
 
-__host__ FrameBuffer::FrameBuffer(unsigned int width, unsigned int height, int max_depth) : width{ width }, height{ height }, max_depth{ max_depth } {}
-
-__device__ void FrameBuffer::writePixel(int x, int y, glm::vec4 pixel) {
-	int idx = y * width + x;
-	// convert RGBA to BGRA that buffer uses
-	device_ptr[idx] = glm::packUnorm4x8(glm::vec4(pixel.b, pixel.g, pixel.r, pixel.a));
+// The OpenGL PBO and headless output buffer both store BGRA8.
+__device__ inline void write_pixel(uint32_t* pixels, int index, glm::vec4 color) {
+	pixels[index] = glm::packUnorm4x8(glm::vec4(color.b, color.g, color.r, color.a));
 }
 
 // Rejects non-finite samples that would poison the accumulation buffer for
@@ -53,7 +24,7 @@ __device__ inline bool is_finite_vec3(const glm::vec3& v) {
 	return isfinite(v.x) && isfinite(v.y) && isfinite(v.z);
 }
 
-__device__ glm::vec3 FrameBuffer::color(const Ray& r, World* world, RandState* local_rand_state) {
+__device__ inline glm::vec3 trace_color(const Ray& r, World* world, RandState* local_rand_state, int max_depth) {
 	Ray cur_ray = r;
 	glm::vec3 cur_attenuation = glm::vec3(1.0, 1.0, 1.0);
 	glm::vec3 accumulated_color = glm::vec3(0.0f);
@@ -149,4 +120,3 @@ __device__ glm::vec3 FrameBuffer::color(const Ray& r, World* world, RandState* l
 	}
 	return accumulated_color;
 }
-#endif

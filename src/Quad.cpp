@@ -1,4 +1,5 @@
-#include "Quad.h" 
+#include "Quad.h"
+#include "GLBufferOffset.h"
 
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
@@ -41,10 +42,10 @@ Quad::Quad(int width, int height) {
 
     // set our vertex attributes pointers
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), nullptr);
 
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), gl_buffer_offset(2 * sizeof(float)));
 
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
@@ -78,9 +79,19 @@ void Quad::cuda_init(int samples, int max_depth, float fov) {
     _renderer = std::make_unique<KernelInfo>(this->CGR, width, height, samples, max_depth, fov);
 }
 
-void Quad::cuda_destroy() const {
-    check_cuda_errors(
-        cudaGraphicsUnregisterResource(CGR));
+Quad::~Quad() {
+    _renderer.reset();
+    if (CGR) {
+        const auto result = cudaGraphicsUnregisterResource(CGR);
+        if (result != cudaSuccess) {
+            std::cerr << "CUDA buffer unregistration failed: " << cudaGetErrorString(result) << '\n';
+        }
+    }
+    glDeleteFramebuffers(1, &framebuffer);
+    glDeleteTextures(1, &texture);
+    glDeleteBuffers(1, &PBO);
+    glDeleteBuffers(1, &VBO);
+    glDeleteVertexArrays(1, &VAO);
 }
 
 void Quad::make_FBO() {
@@ -110,7 +121,7 @@ void Quad::upload_tile(int x, int y, int w, int h) const {
     // Each pixel is 4 bytes (BGRA/RGBA8).
     size_t offset = ((size_t)y * this->width + x) * 4;
 
-    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, w, h, GL_BGRA, GL_UNSIGNED_BYTE, (void*)offset);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, w, h, GL_BGRA, GL_UNSIGNED_BYTE, gl_buffer_offset(offset));
 
     // Reset to default
     glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
@@ -118,6 +129,11 @@ void Quad::upload_tile(int x, int y, int w, int h) const {
 }
 
 void Quad::resize(int width, int height) {
+    if (CGR) {
+        check_cuda_errors(cudaGraphicsUnregisterResource(CGR));
+        CGR = nullptr;
+        _renderer->resources = nullptr;
+    }
     this->width = width;
     this->height = height;
 
@@ -134,9 +150,6 @@ void Quad::resize(int width, int height) {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);    
 
     if (_renderer != nullptr) {
-        check_cuda_errors(
-            cudaGraphicsUnregisterResource(CGR));
-
         check_cuda_errors(
             cudaGraphicsGLRegisterBuffer(&CGR,
                 PBO,

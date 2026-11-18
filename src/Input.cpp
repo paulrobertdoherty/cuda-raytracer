@@ -10,14 +10,14 @@
 #include "Picker.h"
 
 
-#define M_PI 3.14159265358979323846264338327950288f
 
 #define isPressed(x) glfwGetKey(window,x)==GLFW_PRESS
 
 void Input::process_quit(GLFWwindow* window)
 {
-	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
 		glfwSetWindowShouldClose(window, true);
+	}
 }
 
 bool Input::has_camera_moved() const {
@@ -36,12 +36,15 @@ void Input::process_camera_movement(GLFWwindow* window, KernelInfo& kernelInfo, 
 	const float dt = t_diff / 20.0f;
 
 	// ** rotation **
-	double xpos, ypos;
+	double xpos;
+	double ypos;
 	glfwGetCursorPos(window, &xpos, &ypos);
 
-	double x_diff = 0.0, y_diff = 0.0;
+	double x_diff = 0.0;
+	double y_diff = 0.0;
 
-	int width, height;
+	int width;
+	int height;
 
 	glfwGetWindowSize(window, &width, &height);
 
@@ -54,7 +57,9 @@ void Input::process_camera_movement(GLFWwindow* window, KernelInfo& kernelInfo, 
 	if (cursor_captured) {
 		x_diff = (xpos - last_xpos) / width;
 		y_diff = (ypos - last_ypos) / height;
-		if (x_diff != 0 || y_diff != 0) has_moved = true;
+		if (x_diff != 0 || y_diff != 0) {
+			has_moved = true;
+		}
 	}
 
 	// pitch
@@ -74,21 +79,8 @@ void Input::process_camera_movement(GLFWwindow* window, KernelInfo& kernelInfo, 
 
 	kernelInfo.camera_info.rotation = rotation;
 
-	float A = degrees_to_radians(rotation.x);
-	float B = degrees_to_radians(rotation.y);
-	float C = degrees_to_radians(rotation.z);
-
-	glm::vec3 forward;
-	glm::vec3 up;
-
-	if (rotation.x == 0 && rotation.y == 0 && rotation.z == 0) {
-		forward = glm::vec3(0.0f, 0.0f, 1.0f);
-		up = glm::vec3(0.0f, 1.0f, 0.0f);
-	}
-	else {
-		forward = glm::vec3(-cos(A) * sin(B) * cos(C) + sin(A) * sin(C), cos(A) * sin(B) * sin(C) + sin(A) * cos(C), cos(A) * cos(B));
-		up = glm::vec3(sin(A) * sin(B) * cos(C) + cos(A) * sin(C), -sin(A) * sin(B) * sin(C) + cos(A) * cos(C), -sin(A) * cos(B));
-	}
+	const glm::vec3 forward = kernelInfo.camera_info.forward();
+	const glm::vec3 up = kernelInfo.camera_info.up();
 
 	last_xpos = xpos;
 	last_ypos = ypos;
@@ -135,10 +127,12 @@ void Input::process_camera_movement(GLFWwindow* window, KernelInfo& kernelInfo, 
 	// FPS (ray-traced preview) the deadband never triggered and speed
 	// grew linearly without a terminal cap, so the camera flew.
 	const float DRAG = 0.2f;
-	const float decay = std::fmax(0.0f, 1.0f - DRAG * dt);
+	const float decay = std::fmax(0.0f, 1.0f - (DRAG * dt));
 	for (int i = 0; i < 3; i++) {
 		speed[i] *= decay;
-		if (std::fabs(speed[i]) < 0.001f) speed[i] = 0.0f;
+		if (std::fabs(speed[i]) < 0.001f) {
+			speed[i] = 0.0f;
+		}
 	}
 
 	kernelInfo.camera_info.origin = position;
@@ -156,14 +150,16 @@ void Input::process_edit_mouse(GLFWwindow* window,
                                Scene& scene,
                                const CameraInfo& cam,
                                int window_w, int window_h) {
-	double xpos, ypos;
+	double xpos;
+	double ypos;
 	glfwGetCursorPos(window, &xpos, &ypos);
 
 	bool pressed_this_frame = lmb_down && !lmb_was_down;
 	bool released_this_frame = !lmb_down && lmb_was_down;
 
 	if (pressed_this_frame) {
-		glm::vec3 ro, rd;
+		glm::vec3 ro;
+		glm::vec3 rd;
 		Picker::cursor_to_ray(cam, xpos, ypos, window_w, window_h, ro, rd);
 
 		float t;
@@ -173,20 +169,16 @@ void Input::process_edit_mouse(GLFWwindow* window,
 			selected_idx = idx;
 			drag_anchor = hit_point;
 
-			// Drag plane: parallel to the screen, passing through the hit
-			// point. Camera looks in -forward (see Camera.h), so pick the
-			// forward vector from Picker and use it directly as the plane
-			// normal (points toward the camera when negated).
-			glm::vec3 forward, up;
-			Picker::compute_basis(cam, forward, up);
-			drag_plane_normal = forward;
+			// A plane parallel to the screen passes through the picked point.
+			drag_plane_normal = cam.forward();
 		} else {
 			selected_idx = -1;
 		}
 	}
 
 	if (lmb_down && selected_idx >= 0) {
-		glm::vec3 ro, rd;
+		glm::vec3 ro;
+		glm::vec3 rd;
 		Picker::cursor_to_ray(cam, xpos, ypos, window_w, window_h, ro, rd);
 		glm::vec3 new_point;
 		if (Picker::intersect_plane(ro, rd, drag_anchor, drag_plane_normal, new_point)) {

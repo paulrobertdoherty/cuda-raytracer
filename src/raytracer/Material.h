@@ -94,7 +94,7 @@ __device__ inline float schlick_reflectance(float cosine, float ref_idx) {
 
 // Tag for tagged-union Material dispatch. Replaces the previous vtable-based
 // virtual call to scatter()/emitted(): per-bounce dispatch was hot in
-// FrameBuffer::color, and lanes hitting different material subclasses
+// trace_color, and lanes hitting different material subclasses
 // serialized through a vtable indirection. A switch on this tag lets PTXAS
 // inline every case body and removes the vtable load.
 enum class MaterialKind : uint8_t {
@@ -223,7 +223,7 @@ public:
 //
 // Each scatter case below mirrors the body of the original Lambertian /
 // Metal / Dielectric / Emissive / SubsurfaceScatter::scatter overrides.
-// The switch lets the compiler inline all cases at the FrameBuffer::color
+// The switch lets the compiler inline all cases at the trace_color
 // call site and CSE shared loads (rec.normal, rec.p, r_in.direction).
 __device__ inline bool Material::scatter(const Ray& r_in, const HitRecord& rec,
                                           glm::vec3& attenuation, Ray& scattered,

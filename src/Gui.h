@@ -27,6 +27,7 @@ public:
     bool panel_on_right() const { return _panel_on_right; }
 
 private:
+    Gui();  // Establish the context before initializing either backend.
     bool _visible = true;
     int _panel_width = 340;
     bool _panel_on_right = true;

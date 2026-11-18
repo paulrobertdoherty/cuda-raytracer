@@ -25,16 +25,26 @@ Rasterizer::Rasterizer(ShaderManager& shaders, const Scene& scene)
 	glBindBuffer(GL_ARRAY_BUFFER, _tri_vbo);
 	glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
 	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
 	glBindVertexArray(0);
 }
 
 Rasterizer::~Rasterizer() {
-	if (_sphere_ibo) glDeleteBuffers(1, &_sphere_ibo);
-	if (_sphere_vbo) glDeleteBuffers(1, &_sphere_vbo);
-	if (_sphere_vao) glDeleteVertexArrays(1, &_sphere_vao);
-	if (_tri_vbo) glDeleteBuffers(1, &_tri_vbo);
-	if (_tri_vao) glDeleteVertexArrays(1, &_tri_vao);
+	if (_sphere_ibo) {
+		glDeleteBuffers(1, &_sphere_ibo);
+	}
+	if (_sphere_vbo) {
+		glDeleteBuffers(1, &_sphere_vbo);
+	}
+	if (_sphere_vao) {
+		glDeleteVertexArrays(1, &_sphere_vao);
+	}
+	if (_tri_vbo) {
+		glDeleteBuffers(1, &_tri_vbo);
+	}
+	if (_tri_vao) {
+		glDeleteVertexArrays(1, &_tri_vao);
+	}
 }
 
 void Rasterizer::build_sphere_mesh(int slices, int stacks) {
@@ -58,7 +68,7 @@ void Rasterizer::build_sphere_mesh(int slices, int stacks) {
 
 	for (int i = 0; i < stacks; i++) {
 		for (int j = 0; j < slices; j++) {
-			unsigned int a = i * (slices + 1) + j;
+			unsigned int a = (i * (slices + 1)) + j;
 			unsigned int b = a + slices + 1;
 			indices.push_back(a);
 			indices.push_back(b);
@@ -81,33 +91,13 @@ void Rasterizer::build_sphere_mesh(int slices, int stacks) {
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, _sphere_ibo);
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(indices.size() * sizeof(unsigned int)), indices.data(), GL_STATIC_DRAW);
 	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
 	glBindVertexArray(0);
 }
 
-static void compute_camera_basis(const CameraInfo& cam, glm::vec3& forward, glm::vec3& up) {
-	float A = degrees_to_radians(cam.rotation.x);
-	float B = degrees_to_radians(cam.rotation.y);
-	float C = degrees_to_radians(cam.rotation.z);
-
-	if (cam.rotation.x == 0 && cam.rotation.y == 0 && cam.rotation.z == 0) {
-		forward = glm::vec3(0.0f, 0.0f, 1.0f);
-		up = glm::vec3(0.0f, 1.0f, 0.0f);
-	} else {
-		forward = glm::vec3(
-			-cosf(A) * sinf(B) * cosf(C) + sinf(A) * sinf(C),
-			cosf(A) * sinf(B) * sinf(C) + sinf(A) * cosf(C),
-			cosf(A) * cosf(B));
-		up = glm::vec3(
-			sinf(A) * sinf(B) * cosf(C) + cosf(A) * sinf(C),
-			-sinf(A) * sinf(B) * sinf(C) + cosf(A) * cosf(C),
-			-sinf(A) * cosf(B));
-	}
-}
-
 void Rasterizer::render(const CameraInfo& cam, float aspect) {
-	glm::vec3 forward, up;
-	compute_camera_basis(cam, forward, up);
+	const glm::vec3 forward = cam.forward();
+	const glm::vec3 up = cam.up();
 
 	// Ray tracer's camera looks in -forward (see Camera.h get_ray + lower_left_corner).
 	glm::mat4 view = glm::lookAt(cam.origin, cam.origin - forward, up);
@@ -130,14 +120,16 @@ void Rasterizer::render(const CameraInfo& cam, float aspect) {
 	const auto& objs = _scene.objects();
 	for (int i = 0; i < (int)objs.size(); i++) {
 		const SceneObject& p = objs[i];
-		if (p.kind != ProxyKind::Sphere) continue;
+		if (p.kind != ProxyKind::Sphere) {
+			continue;
+		}
 		glm::mat4 model(1.0f);
 		model = glm::translate(model, p.center + p.position);
 		model = glm::scale(model, glm::vec3(p.radius * p.scale));
 		glUniformMatrix4fv(flat_model, 1, GL_FALSE, glm::value_ptr(model));
 		glm::vec3 color = p.color * (i == _selected_idx ? 1.5f : 1.0f);
 		glUniform3fv(flat_color, 1, glm::value_ptr(color));
-		glDrawElements(GL_TRIANGLES, _sphere_index_count, GL_UNSIGNED_INT, 0);
+		glDrawElements(GL_TRIANGLES, _sphere_index_count, GL_UNSIGNED_INT, nullptr);
 	}
 
 	// Draw triangles + rects. Each primitive uses its own uColor uniform so
@@ -228,8 +220,12 @@ void Rasterizer::render(const CameraInfo& cam, float aspect) {
 
 		for (int i = 0; i < (int)objs.size(); i++) {
 			const SceneObject& p = objs[i];
-			if (p.kind != ProxyKind::Mesh) continue;
-			if (p.mesh_index < 0 || p.mesh_index >= (int)meshes.size()) continue;
+			if (p.kind != ProxyKind::Mesh) {
+				continue;
+			}
+			if (p.mesh_index < 0 || p.mesh_index >= (int)meshes.size()) {
+				continue;
+			}
 
 			glm::mat4 model(1.0f);
 			model = glm::translate(model, p.position);

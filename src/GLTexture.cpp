@@ -2,6 +2,7 @@
 
 #include "stb_image.h"
 
+#include <glad/gl.h>
 #include <iostream>
 
 GLTexture::~GLTexture() {

@@ -1,22 +1,17 @@
 #pragma once
 
+#include "SceneTexture.h"
+
 #include <glm/glm.hpp>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
 class Mesh;
 
-#ifdef HEADLESS_BUILD
-class HeadlessTexture;
-using SceneTexture = HeadlessTexture;
-#else
-class GLTexture;
-using SceneTexture = GLTexture;
-#endif
-
-enum class ProxyKind {
+enum class ProxyKind : std::uint8_t {
 	Sphere,
 	Triangle,
 	Rect,
@@ -26,7 +21,7 @@ enum class ProxyKind {
 
 // Material descriptors kept host-side so we can drive the CUDA world rebuild.
 // Scope is intentionally narrow: the same four cases that create_world used.
-enum class SceneMaterial {
+enum class SceneMaterial : std::uint8_t {
 	Lambertian,
 	Metal,
 	Dielectric,

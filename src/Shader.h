@@ -30,7 +30,8 @@ public:
             // open files
             v_shader_file.open(vertexPath);
             f_shader_file.open(fragmentPath);
-            std::stringstream vShaderStream, fShaderStream;
+            std::stringstream vShaderStream;
+            std::stringstream fShaderStream;
             // read file's buffer contents into streams
             vShaderStream << v_shader_file.rdbuf();
             fShaderStream << f_shader_file.rdbuf();
@@ -51,7 +52,8 @@ public:
         const char* vShaderCode = vertex_code.c_str();
         const char* fShaderCode = fragment_code.c_str();
         // 2. compile shaders
-        unsigned int vertex, fragment;
+        unsigned int vertex;
+        unsigned int fragment;
         // vertex shader
         vertex = glCreateShader(GL_VERTEX_SHADER);
         glShaderSource(vertex, 1, &vShaderCode, nullptr);

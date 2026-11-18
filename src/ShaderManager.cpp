@@ -9,12 +9,16 @@
 #include <limits.h>
 #endif
 
+namespace {
+
 // Resolve a path relative to the executable's directory instead of the
 // current working directory, so shader files found by CMake's file(COPY ...)
 // load correctly regardless of where the user launched the binary from.
-static std::string resolve_from_exe(const char* rel) {
+std::string resolve_from_exe(const char* rel) {
 	std::filesystem::path input(rel);
-	if (input.is_absolute()) return std::string(rel);
+	if (input.is_absolute()) {
+		return std::string(rel);
+	}
 
 	std::filesystem::path exe_dir;
 #ifdef _WIN32
@@ -25,12 +29,16 @@ static std::string resolve_from_exe(const char* rel) {
 #else
 	char buf[PATH_MAX];
 	ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-	if (n <= 0) return std::string(rel);
+	if (n <= 0) {
+		return std::string(rel);
+	}
 	buf[n] = '\0';
 	exe_dir = std::filesystem::path(buf).parent_path();
 #endif
 	return (exe_dir / input.relative_path()).lexically_normal().string();
 }
+
+} // namespace
 
 Shader* ShaderManager::load(const std::string& name, const char* vertex_path, const char* fragment_path) {
 	std::string v = resolve_from_exe(vertex_path);
@@ -43,11 +51,15 @@ Shader* ShaderManager::load(const std::string& name, const char* vertex_path, co
 
 Shader* ShaderManager::get(const std::string& name) const {
 	auto it = _shaders.find(name);
-	if (it == _shaders.end()) return nullptr;
+	if (it == _shaders.end()) {
+		return nullptr;
+	}
 	return it->second.get();
 }
 
 Shader* ShaderManager::get_or_load(const std::string& name, const char* vertex_path, const char* fragment_path) {
-	if (Shader* existing = get(name)) return existing;
+	if (Shader* existing = get(name)) {
+		return existing;
+	}
 	return load(name, vertex_path, fragment_path);
 }

@@ -1,37 +1,10 @@
-
-#ifndef HEADLESS_BUILD
-#include "Window.h"
-#endif
-#include "raytracer/kernel.h"
-#include "RenderParams.h"
-#include "Scene.h"
+#include "Application.h"
 #include "cuda_errors.h"
 
 #include <cerrno>
 #include <climits>
 #include <cstdlib>
 #include <iostream>
-#include <string>
-#ifdef HEADLESS_BUILD
-#include <algorithm>
-#include <cctype>
-#include <cstdio>
-#include <fstream>
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h"
-#endif
-
-#if defined(__linux__) && !defined(HEADLESS_BUILD)
-// On hybrid-GPU laptops, force GLX/EGL to use the NVIDIA dGPU so that the
-// OpenGL context lives on the same device as CUDA. Without this, GLFW picks
-// the integrated GPU via Mesa and cudaGraphicsGLRegisterBuffer fails with
-// cudaErrorInvalidGraphicsContext (219). Must be set before glfwInit().
-__attribute__((constructor))
-static void force_nvidia_prime_offload() {
-	setenv("__NV_PRIME_RENDER_OFFLOAD", "1", 0);
-	setenv("__GLX_VENDOR_LIBRARY_NAME", "nvidia", 0);
-}
-#endif
 
 void print_usage(const char* program_name) {
 	std::cout << "Usage: " << program_name << " [options]\n"
@@ -44,33 +17,12 @@ void print_usage(const char* program_name) {
 		<< "  --tile-size <int>  Tile size for progressive rendering (default: 64)\n"
 		<< "  --preview-scale <int>  Pixelation factor used while moving the camera in preview (default: 1)\n"
 		<< "  --obj <path>       Load a wavefront .obj mesh into the scene\n"
-		<< "  --texture <path>   Diffuse texture (PNG/JPG/TGA) for the loaded mesh\n"
-#ifdef HEADLESS_BUILD
-		<< "  --output <path>    Output file (required). Writes PNG if path ends in .png, else raw RGBA.\n"
-		<< "  --seed <int>       Philox RNG seed (default: 1984). Same seed + same scene = same image.\n"
-		<< "  --camera-pos <x,y,z>   Camera position (default: 0,1,4)\n"
-		<< "  --camera-target <x,y,z> Camera look-at target (default: 0,0,0)\n"
-#endif
-		<< "  --help             Show this help message\n";
+		<< "  --texture <path>   Diffuse texture (PNG/JPG/TGA) for the loaded mesh\n";
+	print_backend_usage();
+	std::cout << "  --help             Show this help message\n";
 }
 
-#ifdef HEADLESS_BUILD
-// Returns true on success. Writes diagnostic to stderr on failure.
-static bool parse_vec3(const char* flag, const char* str, glm::vec3& out) {
-	float x = 0, y = 0, z = 0;
-	if (sscanf(str, "%f,%f,%f", &x, &y, &z) != 3) {
-		std::cerr << "Error: " << flag
-		          << " expected x,y,z (three comma-separated floats), got '"
-		          << str << "'\n";
-		return false;
-	}
-	out = glm::vec3(x, y, z);
-	return true;
-}
-#endif
-
-// Returns true on success. On failure prints an error to stderr and returns false.
-static bool parse_int_arg(const char* flag, const char* str, int& out) {
+bool parse_int_arg(const char* flag, const char* str, int& out) {
 	char* end = nullptr;
 	errno = 0;
 	long v = std::strtol(str, &end, 10);
@@ -82,7 +34,8 @@ static bool parse_int_arg(const char* flag, const char* str, int& out) {
 	return true;
 }
 
-static bool parse_float_arg(const char* flag, const char* str, float& out) {
+namespace {
+bool parse_float_arg(const char* flag, const char* str, float& out) {
 	char* end = nullptr;
 	errno = 0;
 	double v = std::strtod(str, &end);
@@ -94,7 +47,65 @@ static bool parse_float_arg(const char* flag, const char* str, float& out) {
 	return true;
 }
 
-static int run(int argc, char* argv[]);
+int run(int argc, char* argv[]) {
+	ApplicationOptions options;
+	for (int i = 1; i < argc; i++) {
+		std::string arg = argv[i];
+
+		if (arg == "--help") {
+			print_usage(argv[0]);
+			return 0;
+		} else if (arg == "--width" && i + 1 < argc) {
+			if (!parse_int_arg("--width", argv[++i], options.width)) {
+				return 1;
+			}
+		} else if (arg == "--height" && i + 1 < argc) {
+			if (!parse_int_arg("--height", argv[++i], options.height)) {
+				return 1;
+			}
+		} else if (arg == "--samples" && i + 1 < argc) {
+			if (!parse_int_arg("--samples", argv[++i], options.params.samples)) {
+				return 1;
+			}
+		} else if (arg == "--depth" && i + 1 < argc) {
+			if (!parse_int_arg("--depth", argv[++i], options.params.max_depth)) {
+				return 1;
+			}
+		} else if (arg == "--fov" && i + 1 < argc) {
+			if (!parse_float_arg("--fov", argv[++i], options.params.fov)) {
+				return 1;
+			}
+		} else if (arg == "--tile-size" && i + 1 < argc) {
+			if (!parse_int_arg("--tile-size", argv[++i], options.params.tile_size)) {
+				return 1;
+			}
+		} else if (arg == "--preview-scale" && i + 1 < argc) {
+			if (!parse_int_arg("--preview-scale", argv[++i], options.params.preview_scale)) {
+				return 1;
+			}
+			if (options.params.preview_scale < 1) {
+				options.params.preview_scale = 1;
+			}
+		} else if (arg == "--obj" && i + 1 < argc) {
+			options.obj_path = argv[++i];
+		} else if (arg == "--texture" && i + 1 < argc) {
+			options.texture_path = argv[++i];
+		} else {
+			auto result = parse_backend_option(arg, i + 1 < argc ? argv[i + 1] : nullptr, options);
+			if (result == OptionResult::Unknown) {
+				std::cerr << "Unknown option: " << arg << "\n";
+				print_usage(argv[0]);
+				return 1;
+			}
+			if (result == OptionResult::Invalid) {
+				return 1;
+			}
+			++i;
+		}
+	}
+	return run_application(options, argv[0]);
+}
+} // namespace
 
 int main(int argc, char* argv[]) {
 	try {
@@ -106,148 +117,4 @@ int main(int argc, char* argv[]) {
 		std::cerr << "Fatal: " << e.what() << "\n";
 		return 1;
 	}
-}
-
-static int run(int argc, char* argv[])
-{
-	int width = 800;
-	int height = 600;
-	RenderParams params;
-	std::string obj_path;
-	std::string texture_path;
-#ifdef HEADLESS_BUILD
-	std::string output_path;
-	int seed = 1984;
-	glm::vec3 camera_pos(0.0f, 1.0f, 4.0f);
-	glm::vec3 camera_target(0.0f, 0.0f, 0.0f);
-#endif
-
-	for (int i = 1; i < argc; i++) {
-		std::string arg = argv[i];
-
-		if (arg == "--help") {
-			print_usage(argv[0]);
-			return 0;
-		} else if (arg == "--width" && i + 1 < argc) {
-			if (!parse_int_arg("--width", argv[++i], width)) return 1;
-		} else if (arg == "--height" && i + 1 < argc) {
-			if (!parse_int_arg("--height", argv[++i], height)) return 1;
-		} else if (arg == "--samples" && i + 1 < argc) {
-			if (!parse_int_arg("--samples", argv[++i], params.samples)) return 1;
-		} else if (arg == "--depth" && i + 1 < argc) {
-			if (!parse_int_arg("--depth", argv[++i], params.max_depth)) return 1;
-		} else if (arg == "--fov" && i + 1 < argc) {
-			if (!parse_float_arg("--fov", argv[++i], params.fov)) return 1;
-		} else if (arg == "--tile-size" && i + 1 < argc) {
-			if (!parse_int_arg("--tile-size", argv[++i], params.tile_size)) return 1;
-		} else if (arg == "--preview-scale" && i + 1 < argc) {
-			if (!parse_int_arg("--preview-scale", argv[++i], params.preview_scale)) return 1;
-			if (params.preview_scale < 1) params.preview_scale = 1;
-		} else if (arg == "--obj" && i + 1 < argc) {
-			obj_path = argv[++i];
-		} else if (arg == "--texture" && i + 1 < argc) {
-			texture_path = argv[++i];
-#ifdef HEADLESS_BUILD
-		} else if (arg == "--output" && i + 1 < argc) {
-			output_path = argv[++i];
-		} else if (arg == "--seed" && i + 1 < argc) {
-			if (!parse_int_arg("--seed", argv[++i], seed)) return 1;
-		} else if (arg == "--camera-pos" && i + 1 < argc) {
-			if (!parse_vec3("--camera-pos", argv[++i], camera_pos)) return 1;
-		} else if (arg == "--camera-target" && i + 1 < argc) {
-			if (!parse_vec3("--camera-target", argv[++i], camera_target)) return 1;
-#endif
-		} else {
-			std::cerr << "Unknown option: " << arg << "\n";
-			print_usage(argv[0]);
-			return 1;
-		}
-	}
-
-#ifdef HEADLESS_BUILD
-	if (output_path.empty()) {
-		std::cerr << "Error: --output <path> is required in headless mode\n";
-		print_usage(argv[0]);
-		return 1;
-	}
-
-	std::cout << "Headless render: " << width << "x" << height
-	          << ", " << params.samples << " spp, depth " << params.max_depth
-	          << ", seed " << seed << "\n";
-
-	// Create the scene
-	Scene scene;
-	if (!obj_path.empty()) {
-		int idx = scene.add_obj_from_file(obj_path, texture_path,
-		                                   glm::vec3(0.0f, 0.5f, -1.0f), 0.5f);
-		if (idx < 0) {
-			std::cerr << "Failed to load OBJ: " << obj_path << "\n";
-			return 1;
-		}
-	}
-
-	// Create headless renderer
-	KernelInfo renderer(width, height, params.samples, params.max_depth, params.fov, seed);
-
-	// Set camera. Reject coincident pos/target — normalize(0) is NaN and would
-	// poison every camera ray.
-	glm::vec3 view = camera_target - camera_pos;
-	float view_len = glm::length(view);
-	if (view_len < 1e-6f) {
-		std::cerr << "Error: --camera-pos and --camera-target are coincident; "
-		          << "give the camera a direction to look in.\n";
-		return 1;
-	}
-	glm::vec3 forward = view / view_len;
-	renderer.set_camera(camera_pos, forward, glm::vec3(0.0f, 1.0f, 0.0f));
-
-	// Build the CUDA world from the scene
-	renderer.rebuild_world(scene);
-
-	// Render
-	std::cout << "Rendering..." << "\n";
-	std::vector<uint8_t> pixels;
-	renderer.render_to_buffer(pixels);
-
-	// Write PNG if path ends in ".png" (case-insensitive), else raw RGBA bytes.
-	std::string lowered = output_path;
-	std::transform(lowered.begin(), lowered.end(), lowered.begin(),
-	               [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
-	bool want_png = lowered.size() >= 4 &&
-	                lowered.compare(lowered.size() - 4, 4, ".png") == 0;
-
-	if (want_png) {
-		// stride = width * 4 bytes (RGBA8). render_to_buffer already produced
-		// top-row-first pixels (Y-flipped from GL convention), so no further
-		// flipping needed.
-		int rc = stbi_write_png(output_path.c_str(), width, height, 4,
-		                        pixels.data(), width * 4);
-		if (rc == 0) {
-			std::cerr << "Failed to write PNG: " << output_path << "\n";
-			return 1;
-		}
-		std::cout << "Saved " << width << "x" << height
-		          << " PNG to: " << output_path << "\n";
-	} else {
-		std::ofstream out(output_path, std::ios::binary);
-		if (!out) {
-			std::cerr << "Failed to open: " << output_path << "\n";
-			return 1;
-		}
-		out.write(reinterpret_cast<const char*>(pixels.data()),
-		          static_cast<std::streamsize>(pixels.size()));
-		if (!out) {
-			std::cerr << "Failed to write: " << output_path << "\n";
-			return 1;
-		}
-		std::cout << "Saved " << width << "x" << height
-		          << " raw RGBA to: " << output_path << "\n";
-	}
-
-	return 0;
-#else
-	Window window(width, height, params, obj_path, texture_path);
-
-	return window.init();
-#endif
 }

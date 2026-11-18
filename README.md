@@ -36,6 +36,16 @@ cmake --preset x64-release
 cmake --build out/build/x64-release
 ```
 
+## Regression tests
+
+The headless build runs CUDA geometry and material checks and compares a fixed-seed OBJ render with a reference image. The tests require a CUDA-capable GPU and the render comparison uses Python 3.
+
+```bash
+cmake -S . -B build-headless -DHEADLESS=ON -DBUILD_TESTING=ON
+cmake --build build-headless
+ctest --test-dir build-headless --output-on-failure
+```
+
 ## Running
 
 ```bash

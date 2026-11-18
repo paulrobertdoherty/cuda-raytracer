@@ -2,8 +2,6 @@
 
 #include <iostream>
 
-RenderLoop::RenderLoop() {}
-
 int RenderLoop::init_gl_resources(GLFWwindow* window,
                                   ShaderManager& shaders,
                                   const Scene& scene,
@@ -13,7 +11,7 @@ int RenderLoop::init_gl_resources(GLFWwindow* window,
 	_accum_shader = shaders.load("accumulate",
 		"./shaders/rendertype_accumulate.vert", "./shaders/rendertype_accumulate.frag");
 
-	if (!_screen_shader || !_accum_shader) {
+	if (!_screen_shader || !_screen_shader->ID || !_accum_shader || !_accum_shader->ID) {
 		std::cerr << "[RenderLoop] shader load failed: screen="
 		          << static_cast<const void*>(_screen_shader)
 		          << " accumulate=" << static_cast<const void*>(_accum_shader) << "\n";
@@ -21,7 +19,8 @@ int RenderLoop::init_gl_resources(GLFWwindow* window,
 	}
 
 	{
-		int fb_w = 0, fb_h = 0;
+		int fb_w = 0;
+		int fb_h = 0;
 		glfwGetFramebufferSize(window, &fb_w, &fb_h);
 		_render_width = fb_w;
 		_render_height = fb_h;
@@ -61,18 +60,19 @@ int RenderLoop::init_gl_resources(GLFWwindow* window,
 	return 0;
 }
 
-void RenderLoop::destroy() {
-	_current_frame->cuda_destroy();
-
+RenderLoop::~RenderLoop() {
 	if (_raster_depth_rb != 0) {
 		glDeleteRenderbuffers(1, &_raster_depth_rb);
-		_raster_depth_rb = 0;
 	}
 }
 
 void RenderLoop::resize(int width, int height) {
-	if (width == _render_width && height == _render_height) return;
-	if (width == 0 || height == 0) return;
+	if (width == _render_width && height == _render_height) {
+		return;
+	}
+	if (width == 0 || height == 0) {
+		return;
+	}
 
 	_render_width = width;
 	_render_height = height;
@@ -121,7 +121,8 @@ void RenderLoop::render_frame(GLFWwindow* window,
                               int& frame_count,
                               bool camera_moving,
                               bool raster_enabled) {
-	int window_w = 0, window_h = 0;
+	int window_w = 0;
+	int window_h = 0;
 	glfwGetFramebufferSize(window, &window_w, &window_h);
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);

@@ -38,11 +38,19 @@ public:
 	void on_framebuffer_resize(int w, int h);
 
 	int init();
-	void destroy();
 	void update_viewport();
 
 private:
-	GLFWwindow* _window = nullptr;
+	// Members are destroyed in reverse order. Scene, renderer, and GUI all
+	// release their resources while this window's GL context is still current.
+	struct GlfwSession {
+		GlfwSession();
+		~GlfwSession();
+		GlfwSession(const GlfwSession&) = delete;
+		GlfwSession& operator=(const GlfwSession&) = delete;
+	};
+	GlfwSession _glfw;
+	std::unique_ptr<GLFWwindow, decltype(&glfwDestroyWindow)> _window{nullptr, glfwDestroyWindow};
 	int _window_width = 0;
 	int _window_height = 0;
 
@@ -62,7 +70,6 @@ private:
 
 	std::chrono::steady_clock::time_point _last_frame;
 
-	int init_glfw();
 	static int init_glad();
 	void tick();
 };

@@ -7,7 +7,9 @@ int SceneController::load_obj_from_file(const std::string& obj_path,
                                         const std::string& texture_path,
                                         const glm::vec3& position,
                                         float scale) {
-	if (obj_path.empty()) return -1;
+	if (obj_path.empty()) {
+		return -1;
+	}
 	return _scene->add_obj_from_file(obj_path, texture_path, position, scale);
 }
 

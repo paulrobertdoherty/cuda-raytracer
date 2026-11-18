@@ -9,9 +9,7 @@ void check_cuda(cudaError_t result, char const* const func, const char* const fi
         oss << "CUDA error " << static_cast<unsigned int>(result)
             << " (" << cudaGetErrorString(result) << ") at "
             << file << ":" << line << " '" << func << "'";
-        // Reset the device to recover from sticky errors so subsequent CUDA
-        // work in a recovered context isn't poisoned.
-        cudaDeviceReset();
+        // Keep the context alive while resource owners unwind to main().
         throw CudaError(result, oss.str());
     }
 }
