@@ -88,8 +88,9 @@ int run_application(const ApplicationOptions& options, const char* program_name)
 		          << "give the camera a direction to look in.\n";
 		return 1;
 	}
-	glm::vec3 forward = view / view_len;
-	renderer.set_camera(options.camera_pos, forward, glm::vec3(0.0f, 1.0f, 0.0f));
+	// Camera places the image plane along its negative Z axis.
+	const glm::vec3 camera_z = -view / view_len;
+	renderer.set_camera(options.camera_pos, camera_z, glm::vec3(0.0f, 1.0f, 0.0f));
 
 	// Build the CUDA world from the scene
 	renderer.rebuild_world(scene);

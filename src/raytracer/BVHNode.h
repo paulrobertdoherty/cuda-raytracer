@@ -2,6 +2,7 @@
 
 #include "Hittable.h"
 #include "AABB.h"
+#include <new>
 
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
@@ -37,27 +38,20 @@ __device__ inline float bvh_surface_area(const AABB& b) {
     return 2.0f * (d.x * d.y + d.y * d.z + d.z * d.x);
 }
 
-// Upper bound on top-level BVH size. The scene World caps capacity at a few
-// dozen objects (see World.h), so 64 is comfortable headroom. Anything over
-// this cap falls back to median split along the widest axis.
+// Larger ranges use a median split to bound temporary stack usage.
 constexpr int BVH_SAH_MAX_N = 64;
 
 class BVHNode : public Hittable {
 public:
 	__device__ BVHNode();
 
-    __device__ BVHNode(Hittable** objects, int n, float time0, float time1, curandState* local_rand_state)
+    __device__ BVHNode(Hittable** objects, int n, float time0, float time1, BVHNode*& next_node, AABB* prefix)
         : Hittable(HittableKind::BVHNode) {
         if (n == 1) {
             left = right = objects[0];
         } else if (n == 2) {
             left = objects[0];
             right = objects[1];
-            AABB box_left, box_right;
-            left->bounding_box(time0, time1, box_left);
-            right->bounding_box(time0, time1, box_right);
-            box = surrounding_box(box_left, box_right);
-            return;
         } else {
             int best_axis = 0;
             int best_split = n / 2;
@@ -67,7 +61,6 @@ public:
                 // using prefix+suffix bounding boxes. O(3*n^2) worst case, but
                 // n is small so this is cheap compared with ray traversal.
                 float best_cost = FLT_MAX;
-                AABB prefix[BVH_SAH_MAX_N];
                 for (int axis = 0; axis < 3; axis++) {
                     sort_hittables(objects, n, axis);
 
@@ -116,20 +109,32 @@ public:
                 best_split = n / 2;
             }
 
-            left  = new BVHNode(objects, best_split,
-                                time0, time1, local_rand_state);
-            right = new BVHNode(objects + best_split, n - best_split,
-                                time0, time1, local_rand_state);
+            left  = new (next_node++) BVHNode(objects, best_split,
+                                time0, time1, next_node, prefix);
+            right = new (next_node++) BVHNode(objects + best_split, n - best_split,
+                                time0, time1, next_node, prefix);
         }
 
+        left->bvh_parent = this;
+        right->bvh_parent = this;
+        box = child_bounds(time0, time1);
+    }
+
+    __device__ AABB child_bounds(float time0, float time1) const {
         AABB box_left, box_right;
+        left->bounding_box(time0, time1, box_left);
+        right->bounding_box(time0, time1, box_right);
+        return surrounding_box(box_left, box_right);
+    }
 
-        if (!left->bounding_box(time0, time1, box_left) ||
-            !right->bounding_box(time0, time1, box_right)) {
-                return;
+    __device__ void refit_ancestors() {
+        for (BVHNode* node = this; node; node = node->bvh_parent) {
+            const AABB updated = node->child_bounds(0.0f, 0.0f);
+            if (updated.min() == node->box.min() && updated.max() == node->box.max()) {
+                break;
+            }
+            node->box = updated;
         }
-
-        box = surrounding_box(box_left, box_right);
     }
 
 	// hit() body lives in HittableDispatch.h so it can call the tagged
@@ -145,10 +150,4 @@ public:
 	Hittable* right;
 	AABB box;
 
-    __device__ ~BVHNode() {
-        delete left;
-        if (right != left) {
-            delete right;
-        }
-    }
 };

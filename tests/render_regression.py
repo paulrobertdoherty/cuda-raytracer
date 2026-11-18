@@ -15,8 +15,7 @@ def main(renderer):
             renderer, "--obj", str(data / "tetrahedron.obj"),
             "--width", str(width), "--height", str(height),
             "--samples", "32", "--depth", "8", "--seed", "42", "--fov", "45",
-            # The current CLI uses the backward camera axis (cuda-raytracer-dle).
-            "--camera-pos", "0,1,2", "--camera-target", "0,1.7,5",
+            "--camera-pos", "0,1,2", "--camera-target", "0,0.3,-1",
             "--output", str(output),
         ], check=True)
         actual = output.read_bytes()

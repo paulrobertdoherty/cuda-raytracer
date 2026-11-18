@@ -40,9 +40,6 @@ public:
 		                      -this->normal.y);
 	}
 
-	__device__ ~Disc() {
-		delete mat_ptr;
-	}
 
 	__device__ bool hit(const Ray& r, float t_min, float t_max, HitRecord& rec) const override {
 		float denom = glm::dot(normal, r.direction);

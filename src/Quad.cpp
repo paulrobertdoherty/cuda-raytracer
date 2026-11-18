@@ -1,10 +1,11 @@
 #include "Quad.h"
 #include "GLBufferOffset.h"
+#include "RenderParams.h"
 
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
-#include <fstream>
+#include <stdexcept>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include <cuda_gl_interop.h>
@@ -71,18 +72,26 @@ Quad::Quad(int width, int height) {
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void Quad::cuda_init(int samples, int max_depth, float fov) {
+Quad::Quad(int width, int height, const RenderParams& params)
+    : Quad(width, height) {
     check_cuda_errors(
-        cudaGraphicsGLRegisterBuffer(&CGR,
+        cudaGraphicsGLRegisterBuffer(&_resource,
             PBO,
             cudaGraphicsRegisterFlagsNone));
-    _renderer = std::make_unique<KernelInfo>(this->CGR, width, height, samples, max_depth, fov);
+    _renderer = std::make_unique<KernelInfo>(_resource, width, height, params.samples, params.max_depth, params.fov);
+}
+
+KernelInfo& Quad::require_renderer() const {
+    if (!_renderer) {
+        throw std::logic_error("Quad has no CUDA renderer");
+    }
+    return *_renderer;
 }
 
 Quad::~Quad() {
     _renderer.reset();
-    if (CGR) {
-        const auto result = cudaGraphicsUnregisterResource(CGR);
+    if (_resource) {
+        const auto result = cudaGraphicsUnregisterResource(_resource);
         if (result != cudaSuccess) {
             std::cerr << "CUDA buffer unregistration failed: " << cudaGetErrorString(result) << '\n';
         }
@@ -103,13 +112,18 @@ void Quad::make_FBO() {
 
 void Quad::render_kernel(bool camera_moving, int pixelate) const {
     glBindTexture(GL_TEXTURE_2D, 0);
-    _renderer->render(camera_moving, pixelate);
+    require_renderer().render(camera_moving, pixelate);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, this->PBO);
     glBindTexture(GL_TEXTURE_2D, this->texture);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
 }
 
-void Quad::upload_tile(int x, int y, int w, int h) const {
+void Quad::render_tile(int x, int y, int w, int h, int samples) const {
+    auto& kernel = require_renderer();
+    kernel.map_pbo();
+    kernel.render_tile(x, y, w, h, samples);
+    kernel.unmap_pbo();
+
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, this->PBO);
     glBindTexture(GL_TEXTURE_2D, this->texture);
 
@@ -129,9 +143,9 @@ void Quad::upload_tile(int x, int y, int w, int h) const {
 }
 
 void Quad::resize(int width, int height) {
-    if (CGR) {
-        check_cuda_errors(cudaGraphicsUnregisterResource(CGR));
-        CGR = nullptr;
+    if (_resource) {
+        check_cuda_errors(cudaGraphicsUnregisterResource(_resource));
+        _resource = nullptr;
         _renderer->resources = nullptr;
     }
     this->width = width;
@@ -151,11 +165,11 @@ void Quad::resize(int width, int height) {
 
     if (_renderer != nullptr) {
         check_cuda_errors(
-            cudaGraphicsGLRegisterBuffer(&CGR,
+            cudaGraphicsGLRegisterBuffer(&_resource,
                 PBO,
                 cudaGraphicsRegisterFlagsNone));
 
-        _renderer->resources = this->CGR;
+        _renderer->resources = _resource;
         _renderer->resize(width, height);
     }
 }

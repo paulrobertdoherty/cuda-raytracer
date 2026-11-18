@@ -3,43 +3,18 @@
 #include "Hittable.h"
 #include "AABB.h"
 
-#include "thrust/device_ptr.h"
-#include "thrust/device_malloc.h"
-#include "thrust/device_free.h"
-
-#include <curand_kernel.h>
-
-
+class BVHNode;
 
 class World : public Hittable {
 public:
-    int number_of_objects;
-    int capacity;
-    Hittable** objects;
-    Hittable* bvh_root;
+    // All views refer to the renderer's reusable scene allocation.
+    int number_of_objects = 0;
+    Hittable** objects = nullptr;
+    Hittable* bvh_root = nullptr;
+    Hittable** lights = nullptr;
+    int num_lights = 0;
 
-    // Non-owning view: each element is also stored in objects[] (and therefore
-    // owned by bvh_root once the BVH is built). add_light() must always be paired
-    // with add() on the same pointer — the destructor only frees the backing
-    // array, never the elements.
-    Hittable** lights;
-    int num_lights;
-    int lights_capacity;
-
-    __device__ World() : World(8) {}
-
-    __device__ World(int initial_capacity) : Hittable(HittableKind::World) {
-        int cap = initial_capacity > 0 ? initial_capacity : 8;
-        objects = new Hittable*[cap];
-        number_of_objects = 0;
-        this->capacity = cap;
-        bvh_root = nullptr;
-        lights = new Hittable*[cap];
-        num_lights = 0;
-        lights_capacity = cap;
-    }
-
-    __device__ ~World();
+    __device__ World() : Hittable(HittableKind::World) {}
 
     // hit() body lives in HittableDispatch.h so it can route child calls
     // (bvh_root->hit, objects[i]->hit) through the tagged dispatcher.
@@ -47,65 +22,22 @@ public:
 
     __device__ virtual bool bounding_box(float time0, float time1, AABB& output_box) const;
 
-    __device__ void build_bvh(curandState* rand_state);
-
-    __device__ bool add(Hittable* object) {
-        if (number_of_objects >= capacity) {
-            int new_cap = capacity * 2;
-            Hittable** bigger = new Hittable*[new_cap];
-            for (int i = 0; i < number_of_objects; i++) bigger[i] = objects[i];
-            delete[] objects;
-            objects = bigger;
-            capacity = new_cap;
-        }
-
-        objects[number_of_objects] = object;
-        number_of_objects++;
-        return true;
-    }
-
-    __device__ bool add_light(Hittable* object) {
-        if (num_lights >= lights_capacity) {
-            int new_cap = lights_capacity * 2;
-            Hittable** bigger = new Hittable*[new_cap];
-            for (int i = 0; i < num_lights; i++) bigger[i] = lights[i];
-            delete[] lights;
-            lights = bigger;
-            lights_capacity = new_cap;
-        }
-        lights[num_lights++] = object;
-        return true;
-    }
-
+    __device__ void build_bvh(Hittable** sorted_objects, BVHNode* nodes);
 };
-
-/*
-* This is a pretty bad way to do this, but I honestly don't know how to do it better
-* During the compilation it is checked if the code is being compiled by nvcc
-* If it is, then the destructor is defined
-* If it is not, then the destructor is not defined to avoid multiple definitions
-*/ 
 
 #ifdef __CUDACC__
 
 #include "BVHNode.h"
 
-__device__ void World::build_bvh(curandState* rand_state) {
+__device__ void World::build_bvh(Hittable** sorted_objects, BVHNode* nodes) {
+    bvh_root = nullptr;
     if (number_of_objects > 0) {
-        bvh_root = new BVHNode(objects, number_of_objects, 0.0f, 0.0f, rand_state);
+        // A split finishes evaluating candidate bounds before recursing. One
+        // scratch array serves the whole tree, independent of its depth.
+        AABB prefix[BVH_SAH_MAX_N];
+        BVHNode* next_node = nodes + 1;
+        bvh_root = new (nodes) BVHNode(sorted_objects, number_of_objects, 0.0f, 0.0f, next_node, prefix);
     }
-}
-
-__device__ World::~World() {
-    if (bvh_root) {
-        delete bvh_root;
-    } else {
-        for (int i = 0; i < number_of_objects; i++) {
-            delete objects[i];
-        }
-    }
-    delete[] objects;
-    delete[] lights;
 }
 
 __device__ AABB surrounding_box(AABB box0, AABB box1) {

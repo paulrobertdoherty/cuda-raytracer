@@ -152,24 +152,10 @@ public:
 
 	__device__ glm::vec3 emitted(float u, float v, const glm::vec3& p) const;
 
-	// Non-virtual destructor: switches on kind to free owned Textures.
-	// All Material subclasses are stored via Material* and freed via
-	// `delete mat_ptr`, so the active-kind branch handles cleanup directly.
-	__device__ ~Material();
 };
-
-// Thin constructor shims preserving the existing `new Lambertian(...)`,
-// `new Metal(...)`, etc. call sites in kernel.cu. Subclasses add no
-// members and no virtual functions, so sizeof(Subclass) == sizeof(Material)
-// and `delete (Material*)p` invokes Material's destructor directly.
 
 class Lambertian final : public Material {
 public:
-	__device__ Lambertian(const glm::vec3& a) : Material(MaterialKind::LAMBERTIAN, false) {
-		u.lambertian.albedo       = new SolidColor(a);
-		u.lambertian.normal_map   = nullptr;
-		u.lambertian.specular_map = nullptr;
-	}
 	__device__ Lambertian(Texture* a, Texture* n = nullptr, Texture* s = nullptr)
 		: Material(MaterialKind::LAMBERTIAN, false) {
 		u.lambertian.albedo       = a;
@@ -201,11 +187,7 @@ public:
 		u.emissive.emit      = a;
 		u.emissive.intensity = i;
 	}
-	__device__ Emissive(glm::vec3 c, float i = 1.0f)
-		: Material(MaterialKind::EMISSIVE, false) {
-		u.emissive.emit      = new SolidColor(c);
-		u.emissive.intensity = i;
-	}
+
 };
 
 class SubsurfaceScatter final : public Material {
@@ -334,21 +316,4 @@ __device__ inline glm::vec3 Material::emitted(float u_coord, float v_coord, cons
 		return u.emissive.intensity * u.emissive.emit->value(u_coord, v_coord, p);
 	}
 	return glm::vec3(0.0f);
-}
-
-__device__ inline Material::~Material() {
-	switch (kind) {
-		case MaterialKind::LAMBERTIAN:
-			delete u.lambertian.albedo;
-			if (u.lambertian.normal_map)   delete u.lambertian.normal_map;
-			if (u.lambertian.specular_map) delete u.lambertian.specular_map;
-			break;
-		case MaterialKind::EMISSIVE:
-			delete u.emissive.emit;
-			break;
-		case MaterialKind::METAL:
-		case MaterialKind::DIELECTRIC:
-		case MaterialKind::SUBSURFACE_SCATTER:
-			break;
-	}
 }

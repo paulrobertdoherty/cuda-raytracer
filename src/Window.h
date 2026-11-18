@@ -27,7 +27,7 @@ public:
 	const KernelInfo& renderer() const;
 	bool input_edit_mode() const;
 
-	void scene_modified();
+	void scene_structure_changed();
 	void reset_accumulation();
 	void start_final_render();
 

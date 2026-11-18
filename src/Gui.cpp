@@ -270,7 +270,6 @@ void Gui::draw_scene_objects(Window& app) {
 
     auto& objects = app.scene().mutable_objects();
     int delete_idx = -1;
-    bool any_changed = false;
 
     for (int i = 0; i < (int)objects.size(); i++) {
         SceneObject& o = objects[i];
@@ -387,7 +386,8 @@ void Gui::draw_scene_objects(Window& app) {
             }
 
             if (changed) {
-                any_changed = true;
+                app.renderer().update_object(app.scene(), i);
+                app.reset_accumulation();
             }
             ImGui::TreePop();
         }
@@ -397,11 +397,7 @@ void Gui::draw_scene_objects(Window& app) {
 
     if (delete_idx >= 0) {
         app.scene().remove_object(delete_idx);
-        any_changed = true;
-    }
-
-    if (any_changed) {
-        app.scene_modified();
+        app.scene_structure_changed();
     }
 
     ImGui::Spacing();
@@ -471,7 +467,7 @@ void Gui::draw_add_object(Window& app) {
                 o.scattering_distance = _new_obj_scatter_dist;
                 o.extinction_coeff = _new_obj_extinction;
             }
-            app.scene_modified();
+            app.scene_structure_changed();
         }
     } else {
         float c[3] = { _new_disc_center.x, _new_disc_center.y, _new_disc_center.z };
@@ -500,7 +496,7 @@ void Gui::draw_add_object(Window& app) {
             disc.scattering_distance = _new_obj_scatter_dist;
             disc.extinction_coeff = _new_obj_extinction;
             app.scene().mutable_objects().push_back(disc);
-            app.scene_modified();
+            app.scene_structure_changed();
         }
     }
 
@@ -564,7 +560,7 @@ void Gui::draw_file_loader(Window& app) {
             glm::vec3(0.0f, 0.5f, -1.0f), 0.5f,
             _pending_normal_path, _pending_specular_path);
         if (idx >= 0) {
-            app.scene_modified();
+            app.scene_structure_changed();
             _pending_obj_path.clear();
             _pending_diffuse_path.clear();
             _pending_normal_path.clear();

@@ -36,9 +36,6 @@ public:
 		}
 	}
 
-	__device__ ~Rect() {
-		delete mat_ptr;
-	}
 
 	__device__ bool hit(const Ray& r, float t_min, float t_max, HitRecord& rec) const override {
 		float denom = glm::dot(normal, r.direction);

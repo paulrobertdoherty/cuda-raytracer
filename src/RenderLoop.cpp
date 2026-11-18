@@ -29,8 +29,7 @@ int RenderLoop::init_gl_resources(GLFWwindow* window,
 	_blit_quad = std::make_unique<Quad>(_render_width, _render_height);
 	_blit_quad->make_FBO();
 
-	_current_frame = std::make_unique<Quad>(_render_width, _render_height);
-	_current_frame->cuda_init(params.samples, params.max_depth, params.fov);
+	_current_frame = std::make_unique<Quad>(_render_width, _render_height, params);
 	_current_frame->make_FBO();
 
 	_accum_frame = std::make_unique<Quad>(_render_width, _render_height);
@@ -54,8 +53,6 @@ int RenderLoop::init_gl_resources(GLFWwindow* window,
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
 	_rasterizer = std::make_unique<Rasterizer>(shaders, scene);
-
-	_current_frame->_renderer->rebuild_world(scene);
 
 	return 0;
 }
@@ -148,11 +145,7 @@ void RenderLoop::render_frame(GLFWwindow* window,
 				int tile_w = (tile_ox + tile_size > _render_width) ? _render_width - tile_ox : tile_size;
 				int tile_h = (tile_oy + tile_size > _render_height) ? _render_height - tile_oy : tile_size;
 
-				_current_frame->_renderer->map_pbo();
-				_current_frame->_renderer->render_tile(tile_ox, tile_oy, tile_w, tile_h, params.samples);
-				_current_frame->_renderer->unmap_pbo();
-
-				_current_frame->upload_tile(tile_ox, tile_oy, tile_w, tile_h);
+				_current_frame->render_tile(tile_ox, tile_oy, tile_w, tile_h, params.samples);
 
 				glBindFramebuffer(GL_READ_FRAMEBUFFER, _current_frame->framebuffer);
 				glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, _current_frame->texture, 0);
@@ -193,7 +186,7 @@ void RenderLoop::render_frame(GLFWwindow* window,
 			glClearColor(0.05f, 0.05f, 0.07f, 1.0f);
 			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-			_rasterizer->render(_current_frame->_renderer->camera_info, (float)_render_width / (float)_render_height);
+			_rasterizer->render(renderer().camera_info, (float)_render_width / (float)_render_height);
 
 			copyFrameBufferTexture(_render_width, _render_height,
 				_raster_frame->framebuffer, _raster_frame->texture,

@@ -21,9 +21,6 @@ struct Input {
 	int selected_idx = -1;
 	glm::vec3 drag_anchor = glm::vec3(0.0f);
 	glm::vec3 drag_plane_normal = glm::vec3(0.0f, 0.0f, 1.0f);
-	// True when the scene has been modified since the last drag release — set
-	// on drag, cleared by the caller after it rebuilds the CUDA world.
-	bool scene_dirty = false;
 
 	Input() {
 		speed = glm::vec3(0.0f, 0.0f, 0.0f);
@@ -40,8 +37,9 @@ struct Input {
 	void on_mouse_button(int button, int action, int mods);
 
 	// Process edit-mode mouse interaction: picking on LMB press, drag plane
-	// reprojection while held, and selection teardown on release.
-	void process_edit_mouse(GLFWwindow* window,
+	// reprojection while held, and selection teardown on release. Return the
+	// moved object's index, or -1 when the scene did not change.
+	int process_edit_mouse(GLFWwindow* window,
 	                        Scene& scene,
 	                        const CameraInfo& cam,
 	                        int window_w, int window_h);

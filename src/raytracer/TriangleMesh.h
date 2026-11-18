@@ -18,15 +18,8 @@ __device__ inline void build_onb_frisvad(const glm::vec3& n, glm::vec3& tangent,
 	bitangent = glm::vec3(bxy,                          sign + n.y * n.y * a, -n.y);
 }
 
-// A full indexed triangle mesh packed into one Hittable. Unlike individual
-// Triangle objects, the mesh owns its vertex and index buffers and its own
-// Material, so a single `delete` (in the destructor) frees everything
-// exactly once — no double-free when thousands of triangles share a material.
-//
-// The buffers are supplied by the host via cudaMalloc; this class does NOT
-// free them (KernelInfo keeps track of them separately and releases them in
-// its destructor or on the next world rebuild). The material IS owned and
-// deleted with the mesh.
+// A mesh borrows its material from the scene pool and its buffers from
+// KernelInfo's mesh cache. Individual triangles share the same material.
 class TriangleMesh : public Hittable {
 public:
 	glm::vec3* d_vertices; // device pointer, count = vertex_count
@@ -61,9 +54,6 @@ public:
 		  d_bvh_nodes(bvh_nodes), bvh_node_count(bvh_count),
 		  d_reordered_tri_ids(reordered_tri_ids), tri_id_count(tri_count) {}
 
-	__device__ ~TriangleMesh() {
-		delete mat_ptr;
-	}
 
 	// Inline AABB slab test operating on raw min/max + precomputed inv_dir.
 	__device__ static bool slab_test(const glm::vec3& bmin, const glm::vec3& bmax,

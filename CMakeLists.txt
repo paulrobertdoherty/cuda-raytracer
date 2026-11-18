@@ -23,7 +23,6 @@ endif()
 # The configurations listed below were modified and taken from https://github.com/Shot511/OpenGLSampleCmake
 
 set(SOURCE_FILES
-	src/main.cpp
 	src/cuda_errors.cpp
 	src/Mesh.cpp
 	src/MeshBVHBuilder.cpp
@@ -50,25 +49,32 @@ else()
 		src/ShaderManager.cpp
 		src/Window.cpp)
 endif()
-list(APPEND SOURCE_FILES
-	src/${BACKEND_DIR}/Application.cpp
-	src/${BACKEND_DIR}/MeshDisplay.cpp)
+list(APPEND SOURCE_FILES src/${BACKEND_DIR}/MeshDisplay.cpp)
 
 file(GLOB_RECURSE HEADER_FILES src/*.h src/*.hpp)
 
-# Add source to this project's executable.
-add_executable(${PROJECT_NAME} ${HEADER_FILES} ${SOURCE_FILES})
-target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/src/${BACKEND_DIR}")
+add_executable(${PROJECT_NAME} src/main.cpp src/${BACKEND_DIR}/Application.cpp)
+if(HEADLESS)
+	# Share the compiled CUDA renderer between the CLI and its integration tests.
+	add_library(headless_renderer STATIC ${HEADER_FILES} ${SOURCE_FILES})
+	target_link_libraries(${PROJECT_NAME} PRIVATE headless_renderer)
+	set(renderer_target headless_renderer)
+else()
+	target_sources(${PROJECT_NAME} PRIVATE ${HEADER_FILES} ${SOURCE_FILES})
+	set(renderer_target ${PROJECT_NAME})
+endif()
+target_include_directories(${renderer_target} PUBLIC "${CMAKE_SOURCE_DIR}/src/${BACKEND_DIR}")
+target_compile_features(${renderer_target} PUBLIC cxx_std_17)
 
 # Set CUDA architecture to the host's GPU architecture (default: native, override with -DCMAKE_CUDA_ARCHITECTURES=XX)
 if(DEFINED CMAKE_CUDA_ARCHITECTURES)
-    set_target_properties(${PROJECT_NAME} PROPERTIES CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+    set_target_properties(${renderer_target} PROPERTIES CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
 else()
-    set_target_properties(${PROJECT_NAME} PROPERTIES CUDA_ARCHITECTURES native)
+    set_target_properties(${renderer_target} PROPERTIES CUDA_ARCHITECTURES native)
 endif()
 
 # CUDA 13+ CCCL requires C++17
-set_target_properties(${PROJECT_NAME} PROPERTIES
+set_target_properties(${renderer_target} PROPERTIES
 	CXX_STANDARD 17
 	CUDA_STANDARD 17)
 
@@ -155,13 +161,13 @@ include_directories(
 
 # Prevent Windows min/max/small macros from conflicting with C++ standard library
 if(WIN32)
-	target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+	target_compile_definitions(${renderer_target} PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
 # Define the link libraries
-target_link_libraries(${PROJECT_NAME} ${LIBS})
+target_link_libraries(${renderer_target} PUBLIC ${LIBS})
 
-target_link_libraries(${PROJECT_NAME} glm::glm)
+target_link_libraries(${renderer_target} PUBLIC glm::glm)
 
 # Create virtual folders to make it look nicer in VS
 if(MSVC_IDE)
@@ -195,16 +201,16 @@ function(CUDA_CONVERT_FLAGS EXISTING_TARGET)
 	endif()
 endfunction()
 
-CUDA_CONVERT_FLAGS(${PROJECT_NAME})
+CUDA_CONVERT_FLAGS(${renderer_target})
 
 # CUDA 13+ CCCL requires the standard conforming preprocessor
 if(MSVC)
-	target_compile_options(${PROJECT_NAME} PRIVATE
+	target_compile_options(${renderer_target} PUBLIC
 		"$<$<COMPILE_LANGUAGE:CXX>:/Zc:preprocessor>"
 		"$<$<COMPILE_LANGUAGE:C>:/Zc:preprocessor>"
 		"$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>")
 else()
-	target_compile_options(${PROJECT_NAME} PRIVATE
+	target_compile_options(${renderer_target} PUBLIC
 		"$<$<COMPILE_LANGUAGE:CXX>:-Wall>"
 		"$<$<COMPILE_LANGUAGE:CXX>:-Wextra>"
 		"$<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Wall,-Wextra>")
@@ -212,7 +218,7 @@ endif()
 
 # check for cache variable set in cmakepresets called IS_CUDA_DEBUG
 if(IS_CUDA_DEBUG)
-	target_compile_options(${PROJECT_NAME} PRIVATE "$<$<AND:$<CONFIG:Debug>,$<COMPILE_LANGUAGE:CUDA>>:-G>")
+	target_compile_options(${renderer_target} PUBLIC "$<$<AND:$<CONFIG:Debug>,$<COMPILE_LANGUAGE:CUDA>>:-G>")
 	message(STATUS "CUDA_DEBUG is ON")
 endif()
 

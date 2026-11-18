@@ -7,6 +7,10 @@ endif()
 add_test(NAME ray_math COMMAND ray_math_test)
 
 if(HEADLESS)
+	add_executable(scene_updates_test scene_updates.cpp)
+	target_link_libraries(scene_updates_test PRIVATE headless_renderer)
+	add_test(NAME scene_updates COMMAND scene_updates_test)
+
 	find_package(Python3 REQUIRED COMPONENTS Interpreter)
 	add_test(NAME render_regression
 		COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/render_regression.py

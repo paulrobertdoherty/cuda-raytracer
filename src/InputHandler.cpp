@@ -94,18 +94,15 @@ void InputHandler::tick(GLFWwindow* window,
 				int w = 0;
 				int h = 0;
 				glfwGetWindowSize(window, &w, &h);
-				_input.process_edit_mouse(window,
-					scene_controller.scene(),
-					renderer.camera_info, w, h);
+				int moved_index = _input.process_edit_mouse(window,
+					scene_controller.scene(), renderer.camera_info, w, h);
+				if (moved_index >= 0) {
+					renderer.update_object(scene_controller.scene(), moved_index);
+				}
 			}
 
 			rasterizer.set_selected(_input.selected_idx);
 
-			if (_input.scene_dirty && !_input.lmb_down) {
-				renderer.rebuild_world(scene_controller.scene());
-				_input.scene_dirty = false;
-				frame_count = 1;
-			}
 			if (_input.lmb_down) {
 				frame_count = 1;
 			}

@@ -146,7 +146,7 @@ void Input::on_mouse_button(int button, int action, int  /*mods*/) {
 	}
 }
 
-void Input::process_edit_mouse(GLFWwindow* window,
+int Input::process_edit_mouse(GLFWwindow* window,
                                Scene& scene,
                                const CameraInfo& cam,
                                int window_w, int window_h) {
@@ -154,6 +154,7 @@ void Input::process_edit_mouse(GLFWwindow* window,
 	double ypos;
 	glfwGetCursorPos(window, &xpos, &ypos);
 
+	int moved_index = -1;
 	bool pressed_this_frame = lmb_down && !lmb_was_down;
 	bool released_this_frame = !lmb_down && lmb_was_down;
 
@@ -186,19 +187,17 @@ void Input::process_edit_mouse(GLFWwindow* window,
 			if (glm::dot(delta, delta) > 0.0f) {
 				scene.mutable_objects()[selected_idx].position += delta;
 				drag_anchor = new_point;
-				scene_dirty = true;
+				moved_index = selected_idx;
 			}
 		}
 	}
 
 	if (released_this_frame) {
-		// Keep the selected_idx until the next press so the outline persists
-		// briefly; the caller uses scene_dirty to decide when to rebuild the
-		// CUDA world.
 		selected_idx = -1;
 	}
 
 	lmb_was_down = lmb_down;
 	last_xpos = xpos;
 	last_ypos = ypos;
+	return moved_index;
 }

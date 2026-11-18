@@ -28,7 +28,12 @@
 #include "Mesh.h"
 #include "MeshBVHBuilder.h"
 
+#include <algorithm>
+#include <limits>
 #include <vector>
+#include <memory>
+#include <new>
+#include <type_traits>
 
 __global__ void raytrace(uint32_t* __restrict__ pixels, int width, int height, int max_depth,
                          thrust::device_ptr<World*> world, thrust::device_ptr<Camera*> d_camera,
@@ -102,10 +107,7 @@ __global__ void raytrace_pixelated(uint32_t* __restrict__ pixels, int width, int
 	}
 }
 
-// Creates an empty world + the device-side camera. The actual scene contents
-// are populated via build_world_from_desc, driven by the host-side Scene in
-// KernelInfo::rebuild_world. Keeping this minimal makes the Scene the single
-// source of truth for what the ray tracer renders.
+// World and Camera persist for the renderer lifetime. The scene pool owns their scene data.
 __global__ void create_world(thrust::device_ptr<World*> d_world, thrust::device_ptr<Camera*> d_camera, CameraInfo camera_info) {
 	if (threadIdx.x == 0 && blockIdx.x == 0) {
 		*d_world = new World();
@@ -113,62 +115,69 @@ __global__ void create_world(thrust::device_ptr<World*> d_world, thrust::device_
 	}
 }
 
-// Per-descriptor Material+Hittable construction. Pulled out of the world-
-// build path so it can run in parallel over N threads instead of serially
-// in a single <<<1,1>>> kernel. Returns the Hittable* owning the freshly
-// allocated Material (which lives on the device heap).
-__device__ static Hittable* construct_hittable_from_desc(const DeviceObjectDesc& d) {
+// One slot per descriptor, shared by full builds and in-place updates.
+// Placement construction sets device vtables. Every pointer in a slot borrows
+// from this pool or the separate mesh/texture caches; no child owns memory.
+struct SceneObjectSlot {
+	std::aligned_union_t<0, Sphere, Triangle, Rect, Disc, TriangleMesh> geometry;
+	std::aligned_union_t<0, Lambertian, Metal, Dielectric, Emissive, SubsurfaceScatter> material;
+	std::aligned_union_t<0, SolidColor, CheckerTexture, ImageTexture> albedo;
+	std::aligned_storage_t<sizeof(ImageTexture), alignof(ImageTexture)> normal;
+	std::aligned_storage_t<sizeof(ImageTexture), alignof(ImageTexture)> specular;
+};
+
+__device__ static Hittable* construct_hittable_from_desc(const DeviceObjectDesc& d, SceneObjectSlot& slot) {
 	Material* mat = nullptr;
 	switch (d.material) {
 		case DeviceMaterialKind::Lambertian: {
 			Texture* albedo = nullptr;
 			if (d.use_checker) {
-				albedo = new CheckerTexture(d.checker_color1, d.checker_color2);
+				albedo = new (&slot.albedo) CheckerTexture(d.checker_color1, d.checker_color2);
 			} else if (d.has_texture && d.d_texture_pixels) {
-				albedo = new ImageTexture(
+				albedo = new (&slot.albedo) ImageTexture(
 					d.d_texture_pixels, d.tex_width, d.tex_height, d.tex_channels);
 			} else {
-				albedo = new SolidColor(d.albedo);
+				albedo = new (&slot.albedo) SolidColor(d.albedo);
 			}
 
 			Texture* normal = nullptr;
 			if (d.has_normal && d.d_normal_pixels) {
-				normal = new ImageTexture(d.d_normal_pixels, d.normal_width, d.normal_height, d.normal_channels);
+				normal = new (&slot.normal) ImageTexture(d.d_normal_pixels, d.normal_width, d.normal_height, d.normal_channels);
 			}
 
 			Texture* specular = nullptr;
 			if (d.has_specular && d.d_specular_pixels) {
-				specular = new ImageTexture(d.d_specular_pixels, d.specular_width, d.specular_height, d.specular_channels);
+				specular = new (&slot.specular) ImageTexture(d.d_specular_pixels, d.specular_width, d.specular_height, d.specular_channels);
 			}
 
-			mat = new Lambertian(albedo, normal, specular);
+			mat = new (&slot.material) Lambertian(albedo, normal, specular);
 			break;
 		}
 		case DeviceMaterialKind::Metal:
-			mat = new Metal(d.albedo, d.fuzz);
+			mat = new (&slot.material) Metal(d.albedo, d.fuzz);
 			break;
 		case DeviceMaterialKind::Dielectric:
-			mat = new Dielectric(d.ior);
+			mat = new (&slot.material) Dielectric(d.ior);
 			break;
 		case DeviceMaterialKind::Emissive:
-			mat = new Emissive(d.emission);
+			mat = new (&slot.material) Emissive(new (&slot.albedo) SolidColor(d.emission));
 			break;
 		case DeviceMaterialKind::SubsurfaceScattering:
-			mat = new SubsurfaceScatter(d.albedo, d.scattering_distance, d.ior, d.extinction_coeff);
+			mat = new (&slot.material) SubsurfaceScatter(d.albedo, d.scattering_distance, d.ior, d.extinction_coeff);
 			break;
 	}
 
 	switch (d.kind) {
 		case DeviceObjectKind::Sphere:
-			return new Sphere(d.center, d.radius, mat);
+			return new (&slot.geometry) Sphere(d.center, d.radius, mat);
 		case DeviceObjectKind::Triangle:
-			return new Triangle(d.v0, d.v1, d.v2, mat);
+			return new (&slot.geometry) Triangle(d.v0, d.v1, d.v2, mat);
 		case DeviceObjectKind::Rect:
-			return new Rect(d.rect_Q, d.rect_u, d.rect_v, mat);
+			return new (&slot.geometry) Rect(d.rect_Q, d.rect_u, d.rect_v, mat);
 		case DeviceObjectKind::Disc:
-			return new Disc(d.disc_center, d.disc_normal, d.disc_radius, mat);
+			return new (&slot.geometry) Disc(d.disc_center, d.disc_normal, d.disc_radius, mat);
 		case DeviceObjectKind::Mesh:
-			return new TriangleMesh(d.d_mesh_vertices, d.d_mesh_normals, d.d_mesh_uvs, d.mesh_vcount,
+			return new (&slot.geometry) TriangleMesh(d.d_mesh_vertices, d.d_mesh_normals, d.d_mesh_uvs, d.mesh_vcount,
 			                         d.d_mesh_indices, d.mesh_icount,
 			                         d.mesh_translate, d.mesh_scale,
 			                         mat,
@@ -179,47 +188,64 @@ __device__ static Hittable* construct_hittable_from_desc(const DeviceObjectDesc&
 	return nullptr;
 }
 
-// Constructs all scene objects in parallel — one thread per descriptor.
-// Each thread independently device-`new`s its Material + Hittable and
-// stores the result in out[tid]. The subsequent assemble_world kernel
-// collects these into a World and builds the top-level BVH serially.
-__global__ void construct_objects_parallel(DeviceObjectDesc* descs, int count,
-                                           Hittable** out) {
+__global__ void construct_objects_parallel(const DeviceObjectDesc* descs, int count,
+                                           SceneObjectSlot* slots, Hittable** out) {
 	int i = threadIdx.x + blockIdx.x * blockDim.x;
-	if (i >= count) return;
-	out[i] = construct_hittable_from_desc(descs[i]);
+	if (i < count) {
+		out[i] = construct_hittable_from_desc(descs[i], slots[i]);
+	}
 }
 
-// Serial tail of the world-rebuild path. Tears down the previous World
-// (cascading through the BVH or the raw object array), allocates a fresh
-// one populated from pre-constructed `objects`, and builds the top-level
-// BVH. Mesh vertex/index buffers are owned by KernelInfo and outlive
-// individual rebuilds.
-__global__ void assemble_world(thrust::device_ptr<World*> d_world,
-                               Hittable** objects,
-                               DeviceObjectDesc* descs,
-                               int count,
-                               int seed) {
-	if (threadIdx.x != 0 || blockIdx.x != 0) return;
-
-	if (*d_world) {
-		delete *d_world;
-	}
-
-	// Over-allocate capacity to leave room for a few post-hoc additions.
-	World* world = new World(count + 8);
-	*d_world = world;
-
+__global__ void assemble_world(thrust::device_ptr<World*> d_world, Hittable** objects,
+                               const DeviceObjectDesc* descs, int count, Hittable** sorted_objects,
+                               Hittable** lights, BVHNode* nodes) {
+	World* world = *d_world;
+	world->objects = objects;
+	world->lights = lights;
+	world->number_of_objects = count;
+	world->num_lights = 0;
 	for (int i = 0; i < count; i++) {
-		Hittable* h = objects[i];
-		if (!h) continue;
-		world->add(h);
-		if (descs[i].is_light) world->add_light(h);
+		sorted_objects[i] = objects[i];
+		if (descs[i].is_light) {
+			objects[i]->light_index = world->num_lights;
+			lights[world->num_lights++] = objects[i];
+		}
 	}
+	world->build_bvh(sorted_objects, nodes);
+}
 
-	curandState rand_state;
-	curand_init(seed, 0, 0, &rand_state);
-	world->build_bvh(&rand_state);
+// Publish the new primitive to every view of the edited slot. A singleton BVH
+// range stores the same leaf in both child pointers.
+__global__ void update_scene_object(thrust::device_ptr<World*> d_world,
+                                    SceneObjectSlot* slots, Hittable** objects,
+                                    DeviceObjectDesc* descs, int i, DeviceObjectDesc updated) {
+	Hittable* old = objects[i];
+	BVHNode* parent = old->bvh_parent;
+	const bool was_left = parent->left == old;
+	const bool was_right = parent->right == old;
+	const int light_index = old->light_index;
+	const bool lights_changed = descs[i].is_light != updated.is_light;
+	descs[i] = updated;
+	Hittable* leaf = construct_hittable_from_desc(updated, slots[i]);
+	objects[i] = leaf;
+	leaf->bvh_parent = parent;
+	if (was_left) parent->left = leaf;
+	if (was_right) parent->right = leaf;
+	parent->refit_ancestors();
+
+	World* world = *d_world;
+	if (lights_changed) {
+		world->num_lights = 0;
+		for (int j = 0; j < world->number_of_objects; ++j) {
+			if (descs[j].is_light) {
+				objects[j]->light_index = world->num_lights;
+				world->lights[world->num_lights++] = objects[j];
+			}
+		}
+	} else if (light_index >= 0) {
+		leaf->light_index = light_index;
+		world->lights[light_index] = leaf;
+	}
 }
 
 __global__ void render_init(int width, int height, thrust::device_ptr<RandState> rand_state, int seed) {
@@ -251,12 +277,6 @@ KernelInfo::KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int sam
 
 	d_world = thrust::device_new<World*>();
 
-	// Increase device heap for device-side new in create_world/BVH construction
-	size_t heap_size;
-	check_cuda_errors(cudaDeviceGetLimit(&heap_size, cudaLimitMallocHeapSize));
-	if (heap_size < 64 * 1024 * 1024) {
-		check_cuda_errors(cudaDeviceSetLimit(cudaLimitMallocHeapSize, 64 * 1024 * 1024));
-	}
 
 	// Increase per-thread stack size for NEE (extra HitRecords + BVH recursion)
 	check_cuda_errors(cudaDeviceSetLimit(cudaLimitStackSize, 8192));
@@ -294,11 +314,6 @@ KernelInfo::KernelInfo(int nx, int ny, int samples, int max_depth, float fov, in
 	d_rand_state_capacity = nx * ny;
 	d_world = thrust::device_new<World*>();
 
-	size_t heap_size;
-	check_cuda_errors(cudaDeviceGetLimit(&heap_size, cudaLimitMallocHeapSize));
-	if (heap_size < 64 * 1024 * 1024) {
-		check_cuda_errors(cudaDeviceSetLimit(cudaLimitMallocHeapSize, 64 * 1024 * 1024));
-	}
 	check_cuda_errors(cudaDeviceSetLimit(cudaLimitStackSize, 8192));
 
 	// Allocate device-side pixel buffer (no OpenGL PBO in headless mode)
@@ -509,17 +524,7 @@ KernelInfo::~KernelInfo() {
 		d_headless_buffer = nullptr;
 	}
 
-	if (d_desc_buffer) {
-		cudaFree(d_desc_buffer);
-		d_desc_buffer = nullptr;
-		d_desc_buffer_capacity = 0;
-	}
-
-	if (d_object_ptr_buffer) {
-		cudaFree(d_object_ptr_buffer);
-		d_object_ptr_buffer = nullptr;
-		d_object_ptr_buffer_capacity = 0;
-	}
+	cudaFree(d_slots);
 
 	// Release any cached mesh vertex/index buffers. These are owned by
 	// KernelInfo (not by the device-side TriangleMesh Hittables) so we
@@ -561,9 +566,186 @@ KernelInfo::~KernelInfo() {
 	d_texture_channels.clear();
 }
 
+bool KernelInfo::describe_object(const Scene& scene, const SceneObject& o, DeviceObjectDesc& d) const {
+	switch (o.material) {
+		case SceneMaterial::Lambertian:           d.material = DeviceMaterialKind::Lambertian; break;
+		case SceneMaterial::Metal:                d.material = DeviceMaterialKind::Metal; break;
+		case SceneMaterial::Dielectric:           d.material = DeviceMaterialKind::Dielectric; break;
+		case SceneMaterial::Emissive:             d.material = DeviceMaterialKind::Emissive; break;
+		case SceneMaterial::SubsurfaceScattering: d.material = DeviceMaterialKind::SubsurfaceScattering; break;
+	}
+	d.albedo = o.albedo;
+	d.fuzz = o.fuzz;
+	d.ior = o.ior;
+	d.emission = o.emission;
+	d.is_light = o.is_light ? 1 : 0;
+	d.scattering_distance = o.scattering_distance;
+	d.extinction_coeff = o.extinction_coeff;
+	d.use_checker    = o.use_checker ? 1 : 0;
+	d.checker_color1 = o.checker_color1;
+	d.checker_color2 = o.checker_color2;
+
+	switch (o.kind) {
+		case ProxyKind::Sphere:
+			d.kind = DeviceObjectKind::Sphere;
+			d.center = o.center + o.position;
+			d.radius = o.radius * o.scale;
+			break;
+		case ProxyKind::Triangle:
+			d.kind = DeviceObjectKind::Triangle;
+			d.v0 = o.position + o.scale * o.v0;
+			d.v1 = o.position + o.scale * o.v1;
+			d.v2 = o.position + o.scale * o.v2;
+			break;
+		case ProxyKind::Rect:
+			d.kind = DeviceObjectKind::Rect;
+			d.rect_Q = o.position + o.scale * o.Q;
+			d.rect_u = o.scale * o.u;
+			d.rect_v = o.scale * o.v;
+			break;
+		case ProxyKind::Disc:
+			d.kind = DeviceObjectKind::Disc;
+			d.disc_center = o.center + o.position;
+			d.disc_normal = o.disc_normal;
+			d.disc_radius = o.radius * o.scale;
+			break;
+		case ProxyKind::Mesh: {
+			if (o.mesh_index < 0 || o.mesh_index >= (int)scene.meshes().size()) {
+				return false;
+			}
+			if (!d_mesh_vertex_buffers[o.mesh_index] ||
+			    !d_mesh_index_buffers[o.mesh_index]) {
+				return false;
+			}
+			d.kind = DeviceObjectKind::Mesh;
+			d.d_mesh_vertices = d_mesh_vertex_buffers[o.mesh_index];
+			d.d_mesh_normals  = d_mesh_normal_buffers[o.mesh_index];
+			d.d_mesh_uvs      = d_mesh_uv_buffers[o.mesh_index];
+			d.d_mesh_indices  = d_mesh_index_buffers[o.mesh_index];
+			d.mesh_vcount     = d_mesh_vcounts[o.mesh_index];
+			d.mesh_icount     = d_mesh_icounts[o.mesh_index];
+			d.mesh_translate  = o.position;
+			d.mesh_scale      = o.scale;
+			const Mesh* m = scene.meshes()[o.mesh_index].get();
+			d.mesh_aabb_min = o.position + o.scale * m->local_min;
+			d.mesh_aabb_max = o.position + o.scale * m->local_max;
+			d.d_mesh_bvh_nodes        = d_mesh_bvh_buffers[o.mesh_index];
+			d.mesh_bvh_node_count     = d_mesh_bvh_node_counts[o.mesh_index];
+			d.d_mesh_reordered_tri_ids = d_mesh_tri_id_buffers[o.mesh_index];
+			d.mesh_tri_id_count        = d_mesh_tri_id_counts[o.mesh_index];
+			// Image textures
+			if (o.texture_index >= 0 &&
+			    o.texture_index < (int)d_texture_pixel_buffers.size() &&
+			    d_texture_pixel_buffers[o.texture_index]) {
+				d.d_texture_pixels = d_texture_pixel_buffers[o.texture_index];
+				d.tex_width        = d_texture_widths[o.texture_index];
+				d.tex_height       = d_texture_heights[o.texture_index];
+				d.tex_channels     = d_texture_channels[o.texture_index];
+				d.has_texture      = 1;
+			} else {
+				d.d_texture_pixels = nullptr;
+				d.has_texture      = 0;
+			}
+
+			if (o.normal_texture_index >= 0 &&
+			    o.normal_texture_index < (int)d_texture_pixel_buffers.size() &&
+			    d_texture_pixel_buffers[o.normal_texture_index]) {
+				d.d_normal_pixels = d_texture_pixel_buffers[o.normal_texture_index];
+				d.normal_width    = d_texture_widths[o.normal_texture_index];
+				d.normal_height   = d_texture_heights[o.normal_texture_index];
+				d.normal_channels = d_texture_channels[o.normal_texture_index];
+				d.has_normal      = 1;
+			} else {
+				d.d_normal_pixels = nullptr;
+				d.has_normal      = 0;
+			}
+
+			if (o.specular_texture_index >= 0 &&
+			    o.specular_texture_index < (int)d_texture_pixel_buffers.size() &&
+			    d_texture_pixel_buffers[o.specular_texture_index]) {
+				d.d_specular_pixels = d_texture_pixel_buffers[o.specular_texture_index];
+				d.specular_width    = d_texture_widths[o.specular_texture_index];
+				d.specular_height   = d_texture_heights[o.specular_texture_index];
+				d.specular_channels = d_texture_channels[o.specular_texture_index];
+				d.has_specular      = 1;
+			} else {
+				d.d_specular_pixels = nullptr;
+				d.has_specular      = 0;
+			}
+			break;
+		}
+		default:
+			return false;
+	}
+	return true;
+}
+
+void KernelInfo::update_object(const Scene& scene, int scene_index) {
+	const auto& objects = scene.objects();
+	if (scene_index < 0 || static_cast<size_t>(scene_index) >= objects.size()) {
+		return;
+	}
+
+	if (objects.size() != descriptor_indices.size() ||
+	    scene.meshes().size() != d_mesh_vertex_buffers.size() ||
+	    scene.textures().size() != d_texture_pixel_buffers.size()) {
+		rebuild_world(scene);
+		return;
+	}
+
+	DeviceObjectDesc updated{};
+	const bool renderable = describe_object(scene, objects[scene_index], updated);
+	const int i = descriptor_indices[scene_index];
+	if (renderable != (i >= 0)) {
+		rebuild_world(scene);
+	} else if (renderable) {
+		update_scene_object<<<1, 1>>>(d_world, d_slots, d_object_ptr_buffer, d_desc_buffer, i, updated);
+		check_cuda_errors(cudaGetLastError());
+	}
+}
+
 void KernelInfo::rebuild_world(const Scene& scene) {
-	// Any in-flight kernels must finish before we delete their world.
+	// Finish queued renders before reusing their scene or asset storage.
 	check_cuda_errors(cudaDeviceSynchronize());
+
+	const size_t required = scene.objects().size();
+	if (required > static_cast<size_t>(std::numeric_limits<int>::max())) {
+		throw std::length_error("Too many scene objects for CUDA descriptor indices");
+	}
+	// Keep the old pool live until the new world has been assembled. This
+	// also preserves its views if a larger allocation cannot be obtained.
+	SceneObjectSlot* slots = d_slots;
+	Hittable** object_ptrs = d_object_ptr_buffer;
+	DeviceObjectDesc* device_descs = d_desc_buffer;
+	Hittable** sorted_objects = d_sorted_objects;
+	Hittable** lights = d_lights;
+	BVHNode* nodes = d_bvh_nodes;
+	std::unique_ptr<SceneObjectSlot, decltype(&cudaFree)> new_pool(nullptr, cudaFree);
+	size_t capacity = d_scene_capacity;
+	if (required > capacity) {
+		// A binary BVH over N leaves requires at most 2*N-1 nodes, including
+		// the one-child wrappers used for singleton ranges.
+		static_assert(alignof(SceneObjectSlot) >= alignof(DeviceObjectDesc));
+		static_assert(alignof(DeviceObjectDesc) >= alignof(BVHNode));
+		static_assert(alignof(BVHNode) >= alignof(Hittable*));
+		constexpr size_t bytes_per_slot = sizeof(SceneObjectSlot) + sizeof(DeviceObjectDesc)
+		                                + 2 * sizeof(BVHNode) + 3 * sizeof(Hittable*);
+		capacity = std::max(required, capacity + capacity / 2);
+		cudaError_t result = cudaMalloc(&slots, capacity * bytes_per_slot);
+		if (result == cudaErrorMemoryAllocation && capacity > required) {
+			// Retry without spare slots when memory is tight.
+			cudaGetLastError();
+			capacity = required;
+			result = cudaMalloc(&slots, capacity * bytes_per_slot);
+		}
+		check_cuda_errors(result);
+		new_pool.reset(slots);
+		device_descs = reinterpret_cast<DeviceObjectDesc*>(slots + capacity);
+		nodes = reinterpret_cast<BVHNode*>(device_descs + capacity);
+		object_ptrs = reinterpret_cast<Hittable**>(nodes + 2 * capacity);
+		sorted_objects = object_ptrs + capacity;
+		lights = sorted_objects + capacity;
+	}
 
 	// ---- Mesh buffer lifetime management ---------------------------------
 	// KernelInfo owns a device-side vertex/index buffer per scene mesh,
@@ -745,169 +927,42 @@ void KernelInfo::rebuild_world(const Scene& scene) {
 		d_texture_channels[i] = ch;
 	}
 
-	// ---- Build host-side descriptor vector -------------------------------
-	const auto& scene_objects = scene.objects();
+	// Invalid mesh objects are skipped. Retain the scene-to-descriptor mapping
+	// so editing a later object still addresses the correct device slot.
+	const auto& objects = scene.objects();
 	std::vector<DeviceObjectDesc> descs;
-	descs.reserve(scene_objects.size());
-
-	for (const SceneObject& o : scene_objects) {
-		DeviceObjectDesc d = {};
-
-		switch (o.material) {
-			case SceneMaterial::Lambertian:           d.material = DeviceMaterialKind::Lambertian; break;
-			case SceneMaterial::Metal:                d.material = DeviceMaterialKind::Metal; break;
-			case SceneMaterial::Dielectric:           d.material = DeviceMaterialKind::Dielectric; break;
-			case SceneMaterial::Emissive:             d.material = DeviceMaterialKind::Emissive; break;
-			case SceneMaterial::SubsurfaceScattering: d.material = DeviceMaterialKind::SubsurfaceScattering; break;
+	descs.reserve(objects.size());
+	std::vector<int> new_indices(objects.size(), -1);
+	for (size_t i = 0; i < objects.size(); ++i) {
+		DeviceObjectDesc desc{};
+		if (describe_object(scene, objects[i], desc)) {
+			new_indices[i] = static_cast<int>(descs.size());
+			descs.push_back(desc);
 		}
-		d.albedo = o.albedo;
-		d.fuzz = o.fuzz;
-		d.ior = o.ior;
-		d.emission = o.emission;
-		d.is_light = o.is_light ? 1 : 0;
-		d.scattering_distance = o.scattering_distance;
-		d.extinction_coeff = o.extinction_coeff;
-		d.use_checker    = o.use_checker ? 1 : 0;
-		d.checker_color1 = o.checker_color1;
-		d.checker_color2 = o.checker_color2;
-
-		switch (o.kind) {
-			case ProxyKind::Sphere:
-				d.kind = DeviceObjectKind::Sphere;
-				d.center = o.center + o.position;
-				d.radius = o.radius * o.scale;
-				break;
-			case ProxyKind::Triangle:
-				d.kind = DeviceObjectKind::Triangle;
-				d.v0 = o.position + o.scale * o.v0;
-				d.v1 = o.position + o.scale * o.v1;
-				d.v2 = o.position + o.scale * o.v2;
-				break;
-			case ProxyKind::Rect:
-				d.kind = DeviceObjectKind::Rect;
-				d.rect_Q = o.position + o.scale * o.Q;
-				d.rect_u = o.scale * o.u;
-				d.rect_v = o.scale * o.v;
-				break;
-			case ProxyKind::Disc:
-				d.kind = DeviceObjectKind::Disc;
-				d.disc_center = o.center + o.position;
-				d.disc_normal = o.disc_normal;
-				d.disc_radius = o.radius * o.scale;
-				break;
-			case ProxyKind::Mesh: {
-				if (o.mesh_index < 0 || o.mesh_index >= (int)scene_meshes.size()) {
-					continue;
-				}
-				if (!d_mesh_vertex_buffers[o.mesh_index] ||
-				    !d_mesh_index_buffers[o.mesh_index]) {
-					continue;
-				}
-				d.kind = DeviceObjectKind::Mesh;
-				d.d_mesh_vertices = d_mesh_vertex_buffers[o.mesh_index];
-				d.d_mesh_normals  = d_mesh_normal_buffers[o.mesh_index];
-				d.d_mesh_uvs      = d_mesh_uv_buffers[o.mesh_index];
-				d.d_mesh_indices  = d_mesh_index_buffers[o.mesh_index];
-				d.mesh_vcount     = d_mesh_vcounts[o.mesh_index];
-				d.mesh_icount     = d_mesh_icounts[o.mesh_index];
-				d.mesh_translate  = o.position;
-				d.mesh_scale      = o.scale;
-				const Mesh* m = scene_meshes[o.mesh_index].get();
-				d.mesh_aabb_min = o.position + o.scale * m->local_min;
-				d.mesh_aabb_max = o.position + o.scale * m->local_max;
-				d.d_mesh_bvh_nodes        = d_mesh_bvh_buffers[o.mesh_index];
-				d.mesh_bvh_node_count     = d_mesh_bvh_node_counts[o.mesh_index];
-				d.d_mesh_reordered_tri_ids = d_mesh_tri_id_buffers[o.mesh_index];
-				d.mesh_tri_id_count        = d_mesh_tri_id_counts[o.mesh_index];
-				// Image textures
-				if (o.texture_index >= 0 &&
-				    o.texture_index < (int)d_texture_pixel_buffers.size() &&
-				    d_texture_pixel_buffers[o.texture_index]) {
-					d.d_texture_pixels = d_texture_pixel_buffers[o.texture_index];
-					d.tex_width        = d_texture_widths[o.texture_index];
-					d.tex_height       = d_texture_heights[o.texture_index];
-					d.tex_channels     = d_texture_channels[o.texture_index];
-					d.has_texture      = 1;
-				} else {
-					d.d_texture_pixels = nullptr;
-					d.has_texture      = 0;
-				}
-
-				if (o.normal_texture_index >= 0 &&
-				    o.normal_texture_index < (int)d_texture_pixel_buffers.size() &&
-				    d_texture_pixel_buffers[o.normal_texture_index]) {
-					d.d_normal_pixels = d_texture_pixel_buffers[o.normal_texture_index];
-					d.normal_width    = d_texture_widths[o.normal_texture_index];
-					d.normal_height   = d_texture_heights[o.normal_texture_index];
-					d.normal_channels = d_texture_channels[o.normal_texture_index];
-					d.has_normal      = 1;
-				} else {
-					d.d_normal_pixels = nullptr;
-					d.has_normal      = 0;
-				}
-
-				if (o.specular_texture_index >= 0 &&
-				    o.specular_texture_index < (int)d_texture_pixel_buffers.size() &&
-				    d_texture_pixel_buffers[o.specular_texture_index]) {
-					d.d_specular_pixels = d_texture_pixel_buffers[o.specular_texture_index];
-					d.specular_width    = d_texture_widths[o.specular_texture_index];
-					d.specular_height   = d_texture_heights[o.specular_texture_index];
-					d.specular_channels = d_texture_channels[o.specular_texture_index];
-					d.has_specular      = 1;
-				} else {
-					d.d_specular_pixels = nullptr;
-					d.has_specular      = 0;
-				}
-				break;
-			}
-		}
-
-		descs.push_back(d);
 	}
 
 	// ---- Upload descriptors and launch the device-side rebuild -----------
 	int count = (int)descs.size();
 	if (count > 0) {
-		// Grow the reused descriptor buffer only when the current scene is
-		// larger than any prior scene. cudaMalloc has non-trivial overhead;
-		// reusing the buffer eliminates it on steady-state scene edits.
-		if (count > d_desc_buffer_capacity) {
-			if (d_desc_buffer) {
-				check_cuda_errors(cudaFree(d_desc_buffer));
-			}
-			check_cuda_errors(cudaMalloc(&d_desc_buffer,
-				sizeof(DeviceObjectDesc) * count));
-			d_desc_buffer_capacity = count;
-		}
-		check_cuda_errors(cudaMemcpy(d_desc_buffer, descs.data(),
-		                             sizeof(DeviceObjectDesc) * count,
+		check_cuda_errors(cudaMemcpy(device_descs, descs.data(), descs.size() * sizeof(DeviceObjectDesc),
 		                             cudaMemcpyHostToDevice));
-
-		// Grow the reused Hittable* output buffer when the scene has more
-		// objects than any prior scene.
-		if (count > d_object_ptr_buffer_capacity) {
-			if (d_object_ptr_buffer) {
-				check_cuda_errors(cudaFree(d_object_ptr_buffer));
-			}
-			check_cuda_errors(cudaMalloc(&d_object_ptr_buffer,
-				sizeof(Hittable*) * count));
-			d_object_ptr_buffer_capacity = count;
-		}
-
-		// Parallel per-descriptor object construction. A 1D grid with one
-		// thread per descriptor is enough for typical scenes (~dozens of
-		// objects). Block size of 64 is a conservative choice that works
-		// well across GPUs without needing scene-size-dependent tuning.
-		int block = 64;
-		int grid = (count + block - 1) / block;
-		construct_objects_parallel<<<grid, block>>>(d_desc_buffer, count,
-		                                             d_object_ptr_buffer);
+		constexpr int block = 64;
+		const int grid = 1 + (count - 1) / block;
+		construct_objects_parallel<<<grid, block>>>(device_descs, count, slots, object_ptrs);
 		check_cuda_errors(cudaGetLastError());
 	}
-
-	// Even with count==0 we still need to swap in a fresh empty World so the
-	// renderer isn't pointing at stale state.
-	assemble_world<<<1, 1>>>(d_world, d_object_ptr_buffer, d_desc_buffer, count, seed);
+	assemble_world<<<1, 1>>>(d_world, object_ptrs, device_descs, count, sorted_objects, lights, nodes);
 	check_cuda_errors(cudaGetLastError());
 	check_cuda_errors(cudaDeviceSynchronize());
+	if (new_pool) {
+		cudaFree(d_slots);
+		d_slots = new_pool.release();
+		d_desc_buffer = device_descs;
+		d_bvh_nodes = nodes;
+		d_object_ptr_buffer = object_ptrs;
+		d_sorted_objects = sorted_objects;
+		d_lights = lights;
+		d_scene_capacity = capacity;
+	}
+	descriptor_indices = std::move(new_indices);
 }

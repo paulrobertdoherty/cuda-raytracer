@@ -11,6 +11,9 @@
 #include <vector>
 
 class Scene;
+class BVHNode;
+struct SceneObjectSlot;
+struct SceneObject;
 struct MeshBVHNode;
 
 // Default tile size for progressive tiled rendering (RENDER_FINAL mode)
@@ -18,8 +21,8 @@ constexpr int DEFAULT_TILE_SIZE = 64;
 
 // ---------------------------------------------------------------------------
 // POD descriptors used to rebuild the CUDA world from host state. These are
-// passed as a contiguous device buffer to build_world_from_desc; the kernel
-// `new`s the appropriate Hittable/Material for each entry.
+// uploaded as a contiguous device buffer; the construction kernel
+// constructs each Hittable and Material in its own scene pool slot.
 // ---------------------------------------------------------------------------
 
 enum class DeviceObjectKind : std::uint8_t {
@@ -125,9 +128,7 @@ struct KernelInfo {
 
     thrust::device_ptr<World*> d_world;
 
-    cudaGraphicsResource_t resources;
     CameraInfo camera_info;
-    uint32_t* d_mapped_pixels = nullptr; // Valid between map_pbo() and unmap_pbo().
 
     int nx, ny;
     int samples;
@@ -164,19 +165,10 @@ struct KernelInfo {
     std::vector<int>            d_texture_heights;
     std::vector<int>            d_texture_channels;
 
-    // Reused descriptor upload buffer — grown on demand, freed in the
-    // destructor. Avoids a cudaMalloc/cudaFree pair on every scene rebuild.
-    DeviceObjectDesc* d_desc_buffer = nullptr;
-    int               d_desc_buffer_capacity = 0;
-
-    // Reused device buffer of Hittable* produced by the parallel
-    // construction kernel and consumed by the assembly kernel. Grown on
-    // demand, freed in the destructor.
-    Hittable** d_object_ptr_buffer = nullptr;
-    int        d_object_ptr_buffer_capacity = 0;
-
     KernelInfo() {}
     ~KernelInfo();
+    KernelInfo(const KernelInfo&) = delete;
+    KernelInfo& operator=(const KernelInfo&) = delete;
     KernelInfo(cudaGraphicsResource_t resources, int nx, int ny, int samples, int max_depth, float fov, int seed = 1984);
     // Headless constructor — no OpenGL, allocates its own device buffer
     KernelInfo(int nx, int ny, int samples, int max_depth, float fov, int seed = 1984);
@@ -184,15 +176,35 @@ struct KernelInfo {
     void render(bool camera_moving, int pixelate = 1);
     void resize(int nx, int ny);
 
-    // Destroy and rebuild the device-side World from the given host scene.
+    // Repopulate the device-side World and rebuild its BVH from the host scene.
     // Re-uploads mesh buffers as needed.
     void rebuild_world(const Scene& scene);
-
-    // Tiled rendering support: map/unmap PBO separately, render individual tiles
-    void map_pbo();
-    void unmap_pbo();
-    void render_tile(int tile_offset_x, int tile_offset_y, int tile_w, int tile_h, int spp);
+    // The scene topology and assets are unchanged. Upload the edited leaf and
+    // refit its existing BVH path.
+    void update_object(const Scene& scene, int scene_index);
 
     // Headless: render the full image and return RGBA pixel data
     void render_to_buffer(std::vector<uint8_t>& output_rgba);
+
+private:
+    // Quad owns the GL buffer and controls when CUDA can access it.
+    friend class Quad;
+    void map_pbo();
+    void unmap_pbo();
+    void render_tile(int tile_offset_x, int tile_offset_y, int tile_w, int tile_h, int spp);
+    cudaGraphicsResource_t resources = nullptr; // Borrowed from the owning Quad.
+    uint32_t* d_mapped_pixels = nullptr; // Valid between map_pbo() and unmap_pbo().
+
+    // d_slots owns a single CUDA allocation. The remaining pointers view
+    // per-object descriptors, BVH nodes and three arrays of geometry pointers.
+    DeviceObjectDesc* d_desc_buffer = nullptr;
+    SceneObjectSlot* d_slots = nullptr;
+    BVHNode* d_bvh_nodes = nullptr;
+    Hittable** d_object_ptr_buffer = nullptr;
+    Hittable** d_sorted_objects = nullptr;
+    Hittable** d_lights = nullptr;
+    size_t d_scene_capacity = 0;
+
+    bool describe_object(const Scene& scene, const SceneObject& object, DeviceObjectDesc& desc) const;
+    std::vector<int> descriptor_indices;  // -1 for mesh objects omitted from the world
 };

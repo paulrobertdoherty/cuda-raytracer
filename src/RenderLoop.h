@@ -39,8 +39,8 @@ public:
 	Quad& current_frame() { return *_current_frame; }
 	const Quad& current_frame() const { return *_current_frame; }
 	GLuint accum_texture() const { return _accum_frame->texture; }
-	KernelInfo& renderer() { return *_current_frame->_renderer; }
-	const KernelInfo& renderer() const { return *_current_frame->_renderer; }
+	KernelInfo& renderer() { return _current_frame->renderer(); }
+	const KernelInfo& renderer() const { return _current_frame->renderer(); }
 	Rasterizer& rasterizer() { return *_rasterizer; }
 
 	int render_width() const { return _render_width; }

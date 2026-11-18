@@ -12,6 +12,7 @@ using RandState = curandStatePhilox4_32_10_t;
 #include "AABB.h"
 
 class Material;
+class BVHNode;
 
 struct HitRecord {
 	float t;
@@ -46,6 +47,8 @@ enum class HittableKind : uint8_t {
 class Hittable {
 public:
 	HittableKind kind;
+	int light_index = -1;
+	BVHNode* bvh_parent = nullptr;
 
 	__device__ Hittable() : kind(HittableKind::Sphere) {} // sentinel, must be overwritten
 	__device__ Hittable(HittableKind k) : kind(k) {}

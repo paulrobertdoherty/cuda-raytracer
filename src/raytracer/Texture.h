@@ -28,32 +28,25 @@ private:
 
 class CheckerTexture : public Texture {
 public:
-	__device__ CheckerTexture() {}
-	__device__ CheckerTexture(Texture* even_tex, Texture* odd_tex) : even(even_tex), odd(odd_tex) {}
-	__device__ CheckerTexture(glm::vec3 even_color, glm::vec3 odd_color) : even(new SolidColor(even_color)), odd(new SolidColor(odd_color)) {}
+	__device__ CheckerTexture(glm::vec3 even_color, glm::vec3 odd_color)
+		: even(even_color), odd(odd_color) {}
 
 	__device__ virtual glm::vec3 value(float u, float v, const glm::vec3& p) const override {
 		float sines = sinf(10.0f * p.x) * sinf(10.0f * p.y) * sinf(10.0f * p.z);
 		if (sines < 0.0f) {
-			return odd->value(u, v, p);
+			return odd;
 		}
 		else {
-			return even->value(u, v, p);
+			return even;
 		}
 	}
 
-	Texture* even = nullptr;
-	Texture* odd = nullptr;
-
-	__device__ ~CheckerTexture() override {
-		delete even;
-		delete odd;
-	}
+private:
+	glm::vec3 even;
+	glm::vec3 odd;
 };
 
-// Device-side image texture. The pixel buffer is owned by KernelInfo and must
-// NOT be freed in this destructor — only the ImageTexture object itself is
-// deleted when the owning Material is destroyed.
+// The image pixels belong to KernelInfo's texture cache.
 class ImageTexture : public Texture {
 public:
 	const unsigned char* d_pixels; // raw device pointer, NOT owned

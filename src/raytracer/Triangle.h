@@ -16,9 +16,6 @@ public:
 	__device__ Triangle(glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, Material* mat)
 		: Hittable(HittableKind::Triangle), v0(v0), v1(v1), v2(v2), mat_ptr(mat) {}
 
-	__device__ ~Triangle() {
-		delete mat_ptr;
-	}
 
 	__device__ bool hit(const Ray& r, float t_min, float t_max, HitRecord& rec) const override {
 		// Moller-Trumbore intersection

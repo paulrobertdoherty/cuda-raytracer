@@ -151,7 +151,10 @@ KernelInfo& Window::renderer() { return _render_loop->renderer(); }
 const KernelInfo& Window::renderer() const { return _render_loop->renderer(); }
 bool Window::input_edit_mode() const { return _input_handler->edit_mode(); }
 
-void Window::scene_modified() {
+void Window::scene_structure_changed() {
+	// Insertion or removal can invalidate the index of an active drag.
+	_input_handler->input().selected_idx = -1;
+	_render_loop->rasterizer().set_selected(-1);
 	_scene_controller->rebuild_world(_render_loop->renderer());
 	_frame_count = 1;
 }
